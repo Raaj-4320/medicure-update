@@ -108,6 +108,13 @@ export default function SellerOrders() {
     }
   };
 
+  const getPaymentColor = (status: string) => {
+    if (status === 'successful') return 'text-emerald-700 bg-emerald-50';
+    if (status === 'failed') return 'text-red-700 bg-red-50';
+    if (status === 'pending' || status === 'processing' || status === 'initiated') return 'text-amber-700 bg-amber-50';
+    return 'text-slate-700 bg-slate-50';
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
@@ -221,7 +228,11 @@ export default function SellerOrders() {
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer</h4>
                     <div className="text-sm">
                       <p className="font-bold text-slate-900">User ID: {order.customerId}</p>
-                      <p className="text-slate-500">Payment: {order.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Online Paid'}</p>
+                      <p className="text-slate-500">Payment Method: {(order.paymentMethod || 'upi').replace('_', ' ').toUpperCase()}</p>
+                      <p className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${getPaymentColor(order.paymentStatus || 'pending')}`}>
+                        Payment: {(order.paymentStatus || 'pending').replace('_', ' ').toUpperCase()}
+                      </p>
+                      {order.transactionReference && <p className="text-slate-500">Txn Ref: {order.transactionReference}</p>}
                     </div>
                   </div>
 
