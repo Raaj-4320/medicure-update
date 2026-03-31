@@ -28,10 +28,7 @@ import PharmacyProfile from './pages/seller/PharmacyProfile';
 import PrescriptionManagement from './pages/seller/PrescriptionManagement';
 import SellerCatalog from './pages/seller/SellerCatalog';
 import ReturnsReplacements from './pages/seller/ReturnsReplacements';
-import SellerPayouts from './pages/seller/SellerPayouts';
 import SellerAnalytics from './pages/seller/SellerAnalytics';
-import Compliance from './pages/seller/Compliance';
-import Support from './pages/seller/Support';
 import SellerNotifications from './pages/seller/SellerNotifications';
 
 // Admin Pages
@@ -45,7 +42,6 @@ import ManufacturerManagement from './pages/admin/ManufacturerManagement';
 import ComplianceRisk from './pages/admin/ComplianceRisk';
 import SafetyControl from './pages/admin/SafetyControl';
 import Financials from './pages/admin/Financials';
-import AdvancedLogistics from './pages/admin/AdvancedLogistics';
 import PrescriptionVerification from './pages/admin/PrescriptionVerification';
 
 // Delivery Pages
@@ -142,10 +138,7 @@ const AppRoutes = () => {
         <Route path="prescriptions" element={<PrescriptionManagement />} />
         <Route path="catalog" element={<SellerCatalog />} />
         <Route path="returns" element={<ReturnsReplacements />} />
-        <Route path="payouts" element={<SellerPayouts />} />
         <Route path="analytics" element={<SellerAnalytics />} />
-        <Route path="compliance" element={<Compliance />} />
-        <Route path="support" element={<Support />} />
         <Route path="notifications" element={<SellerNotifications />} />
       </Route>
 
@@ -168,7 +161,6 @@ const AppRoutes = () => {
         <Route path="compliance" element={<ComplianceRisk />} />
         <Route path="safety" element={<SafetyControl />} />
         <Route path="financials" element={<Financials />} />
-        <Route path="advanced-logistics" element={<AdvancedLogistics />} />
         <Route path="prescriptions" element={<PrescriptionVerification />} />
       </Route>
 

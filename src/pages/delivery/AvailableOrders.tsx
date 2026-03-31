@@ -177,7 +177,7 @@ const AvailableOrders: React.FC = () => {
                       <DollarSign size={12} />
                       <span className="text-[10px] font-bold uppercase tracking-wider">Type</span>
                     </div>
-                    <div className="text-sm font-bold text-slate-900">{order.paymentMethod === 'cod' ? 'COD' : 'Prepaid'}</div>
+                    <div className="text-sm font-bold text-slate-900">{order.paymentMethod === 'cash' ? 'Cash' : 'Prepaid'}</div>
                   </div>
                 </div>
 
