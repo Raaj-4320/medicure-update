@@ -12,8 +12,9 @@ import {
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
 import { MedicineMaster, SellerMedicine } from '../../types';
-import { logFlow } from '../../utils/flowLogger';
+import { logFlow, logRouteState } from '../../utils/flowLogger';
 import { logUI } from '../../utils/uiLogger';
+import SellerAccessState from '../../components/seller/SellerAccessState';
 
 const InventoryManagement: React.FC = () => {
   const { profile } = useAuth();
@@ -28,6 +29,7 @@ const InventoryManagement: React.FC = () => {
   const [newPrice, setNewPrice] = useState('');
   const [newStock, setNewStock] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [accessState, setAccessState] = useState<'ok' | 'missing' | 'pending' | 'rejected'>('ok');
 
   const fetchInventory = async () => {
     if (!profile) return;
@@ -37,10 +39,21 @@ const InventoryManagement: React.FC = () => {
       if (pharmacies.length === 0) {
         setErrorMessage('No pharmacy found for this seller account.');
         setMedicines([]);
+        setAccessState('missing');
+        logRouteState({ route: '/seller/inventory', state: 'blocked', reason: 'NO_PHARMACY' });
         return;
       }
       setErrorMessage('');
       const pId = pharmacies[0].id;
+      const pharmacyStatus = pharmacies[0].status || pharmacies[0].verificationStatus || 'pending';
+      if (pharmacyStatus !== 'verified') {
+        setMedicines([]);
+        setAccessState(pharmacyStatus === 'rejected' ? 'rejected' : 'pending');
+        logRouteState({ route: '/seller/inventory', state: 'blocked', reason: `PHARMACY_${String(pharmacyStatus).toUpperCase()}` });
+        return;
+      }
+      setAccessState('ok');
+      logRouteState({ route: '/seller/inventory', state: 'ok', detail: { pharmacyId: pId } });
       setPharmacyId(pId);
 
       const inventory = await api.getInventory({ pharmacyId: pId });
@@ -163,6 +176,7 @@ const InventoryManagement: React.FC = () => {
   );
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>;
+  if (accessState !== 'ok') return <SellerAccessState mode={accessState} />;
 
   return (
     <div className="space-y-8">

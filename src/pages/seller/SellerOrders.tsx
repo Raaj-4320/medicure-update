@@ -100,12 +100,20 @@ export default function SellerOrders() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'bg-amber-100 text-amber-700';
-      case 'approved': return 'bg-blue-100 text-blue-700';
+      case 'confirmed': return 'bg-blue-100 text-blue-700';
+      case 'packed': return 'bg-indigo-100 text-indigo-700';
       case 'dispatched': return 'bg-purple-100 text-purple-700';
       case 'delivered': return 'bg-slate-100 text-slate-700';
       case 'cancelled': return 'bg-red-100 text-red-700';
       default: return 'bg-slate-100 text-slate-700';
     }
+  };
+
+  const getPaymentColor = (status: string) => {
+    if (status === 'successful') return 'text-emerald-700 bg-emerald-50';
+    if (status === 'failed') return 'text-red-700 bg-red-50';
+    if (status === 'pending' || status === 'processing' || status === 'initiated') return 'text-amber-700 bg-amber-50';
+    return 'text-slate-700 bg-slate-50';
   };
 
   return (
@@ -180,19 +188,28 @@ export default function SellerOrders() {
                           Reject
                         </button>
                         <button 
-                          onClick={() => updateStatus(order.id, 'approved')}
+                          onClick={() => updateStatus(order.id, 'confirmed')}
                           disabled={updatingId === order.id}
                           className="px-6 py-2 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
                         >
-                          Approve Order
+                          Confirm Order
                         </button>
                       </>
                     )}
-                    {order.status === 'approved' && (
+                    {order.status === 'confirmed' && (
+                      <button 
+                        onClick={() => updateStatus(order.id, 'packed')}
+                        disabled={updatingId === order.id}
+                        className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all"
+                      >
+                        Mark Packed
+                      </button>
+                    )}
+                    {order.status === 'packed' && (
                       <button 
                         onClick={() => updateStatus(order.id, 'dispatched')}
                         disabled={updatingId === order.id}
-                        className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all"
+                        className="px-6 py-2 bg-purple-600 text-white text-sm font-bold rounded-xl hover:bg-purple-700 transition-all"
                       >
                         Dispatch Order
                       </button>
@@ -221,7 +238,11 @@ export default function SellerOrders() {
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer</h4>
                     <div className="text-sm">
                       <p className="font-bold text-slate-900">User ID: {order.customerId}</p>
-                      <p className="text-slate-500">Payment: {order.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Online Paid'}</p>
+                      <p className="text-slate-500">Payment Method: {(order.paymentMethod || 'upi').replace('_', ' ').toUpperCase()}</p>
+                      <p className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${getPaymentColor(order.paymentStatus || 'pending')}`}>
+                        Payment: {(order.paymentStatus || 'pending').replace('_', ' ').toUpperCase()}
+                      </p>
+                      {order.transactionReference && <p className="text-slate-500">Txn Ref: {order.transactionReference}</p>}
                     </div>
                   </div>
 
