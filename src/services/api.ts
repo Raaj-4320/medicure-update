@@ -22,6 +22,9 @@ import type {
   MedicineMaster,
   Notification,
   Order,
+  PaymentMethod,
+  PaymentRecord,
+  PaymentStatus,
   Pharmacy,
   Prescription,
   ReturnRequest,
@@ -37,8 +40,12 @@ type FilterOptions = Record<string, string | number | boolean | undefined>;
 
 type PaymentResponse = {
   success: boolean;
+  paymentId: string;
   transactionId: string;
+  status: PaymentStatus;
+  method: PaymentMethod;
   message?: string;
+  failureReason?: string;
 };
 
 type AnalyticsData = {
@@ -57,6 +64,14 @@ const FALLBACK_ANALYTICS: AnalyticsData = {
 
 const makeTraceId = (prefix: 'ord' | 'inv' | 'noti'): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+function getDemoOutcomeOverride(): PaymentStatus | null {
+  const explicit = typeof localStorage !== 'undefined' ? localStorage.getItem('demo_payment_outcome') : null;
+  const valid = explicit === 'successful' || explicit === 'failed' || explicit === 'pending';
+  return valid ? (explicit as PaymentStatus) : null;
+}
 
 function toDictionary(value: unknown): Dictionary {
   if (value && typeof value === 'object') {
@@ -102,6 +117,7 @@ function normalizePharmacy(id: string, data: DocumentData): Pharmacy {
   const source = toDictionary(data);
   const ownerId = asString(source.ownerId, asString(source.sellerId));
   const verificationStatus = asString(source.verificationStatus, asString(source.status, 'pending'));
+  const verificationDetails = toDictionary(source.verificationDetails);
   return {
     id,
     sellerId: ownerId,
@@ -113,7 +129,7 @@ function normalizePharmacy(id: string, data: DocumentData): Pharmacy {
     email: asString(source.email),
     operatingHours: asString(source.operatingHours),
     verificationStatus: (verificationStatus as Pharmacy['verificationStatus']) ?? 'pending',
-    status: verificationStatus,
+    status: (verificationStatus as Pharmacy['status']) ?? 'pending',
     deliveryAvailable: asBoolean(source.deliveryAvailable),
     pickupAvailable: asBoolean(source.pickupAvailable),
     minOrderValue: asNumber(source.minOrderValue),
@@ -121,7 +137,15 @@ function normalizePharmacy(id: string, data: DocumentData): Pharmacy {
     rating: asNumber(source.rating),
     reviewCount: asNumber(source.reviewCount),
     image: asString(source.image),
+    ownerName: asString(source.ownerName, asString(verificationDetails.ownerName)),
+    license: asString(source.license, asString(verificationDetails.licenseNumber)),
+    website: asString(source.website),
+    establishedYear: asString(source.establishedYear),
+    workingDays: asString(source.workingDays),
+    mapUrl: asString(source.mapUrl),
+    verificationDetails: verificationDetails as Pharmacy['verificationDetails'],
     createdAt: asString(source.createdAt, nowIso()),
+    updatedAt: asString(source.updatedAt),
   };
 }
 
@@ -197,6 +221,10 @@ function normalizeOrder(id: string, data: DocumentData): Order {
     items: Array.isArray(source.items) ? (source.items as Order['items']) : [],
     pharmacyName: asString(source.pharmacyName),
     customerName: asString(source.customerName),
+    paymentId: asString(source.paymentId),
+    paymentMethod: (asString(source.paymentMethod, 'upi') as PaymentMethod) ?? 'upi',
+    paymentStatus: (asString(source.paymentStatus, 'pending') as PaymentStatus) ?? 'pending',
+    transactionReference: asString(source.transactionReference),
   };
 }
 
@@ -312,6 +340,29 @@ function normalizeDeliveryAssignment(id: string, data: DocumentData): DeliveryAs
   };
 }
 
+function normalizePayment(id: string, data: DocumentData): PaymentRecord {
+  const source = toDictionary(data);
+  return {
+    id,
+    paymentId: asString(source.paymentId, id),
+    orderId: asString(source.orderId),
+    customerId: asString(source.customerId),
+    pharmacyId: asString(source.pharmacyId),
+    sellerId: asString(source.sellerId),
+    amount: asNumber(source.amount),
+    currency: asString(source.currency, 'INR'),
+    paymentMethod: (asString(source.paymentMethod, 'upi') as PaymentMethod) ?? 'upi',
+    paymentStatus: (asString(source.paymentStatus, 'initiated') as PaymentStatus) ?? 'initiated',
+    transactionReference: asString(source.transactionReference),
+    createdAt: asString(source.createdAt, nowIso()),
+    updatedAt: asString(source.updatedAt, nowIso()),
+    paidAt: asString(source.paidAt),
+    failureReason: asString(source.failureReason),
+    notes: asString(source.notes),
+    metadata: toDictionary(source.metadata),
+  };
+}
+
 function handleFirestoreError(error: unknown, label: string): void {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('requires an index')) {
@@ -321,7 +372,7 @@ function handleFirestoreError(error: unknown, label: string): void {
   console.error(`Error in ${label}:`, error);
 }
 
-function applyFilters<T extends Dictionary>(rows: T[], filters: FilterOptions = {}): T[] {
+function applyFilters<T>(rows: T[], filters: FilterOptions = {}): T[] {
   const active = Object.entries(filters).filter(([, value]) => value !== undefined);
   if (active.length === 0) {
     return rows;
@@ -330,7 +381,7 @@ function applyFilters<T extends Dictionary>(rows: T[], filters: FilterOptions = 
   return rows.filter((row) =>
     active.every(([key, value]) => {
       if (value === undefined) return true;
-      return row[key] === value;
+      return (row as Dictionary)[key] === value;
     }),
   );
 }
@@ -353,7 +404,7 @@ async function listCollection<T>(
     const rows = snapshot.docs.map((entry) => normalize(entry.id, entry.data()));
 
     if (constraints.length === 0) {
-      return applyFilters(rows as Dictionary[] as T[], filters);
+      return applyFilters(rows, filters);
     }
 
     return rows;
@@ -576,6 +627,27 @@ async function updatePharmacy(id: string, patch: Dictionary): Promise<boolean> {
     normalizedPatch.status = patch.verificationStatus;
   }
   return patchDoc('pharmacies', id, normalizedPatch);
+}
+
+async function logPharmacyProfileUpdate(
+  pharmacyId: string,
+  payload: { sellerId?: string; changedFields: string[]; before: Dictionary; after: Dictionary; source?: string },
+): Promise<boolean> {
+  try {
+    const id = await createDoc(`pharmacies/${pharmacyId}/profileSettingsLogs`, {
+      pharmacyId,
+      sellerId: asString(payload.sellerId),
+      changedFields: payload.changedFields,
+      before: payload.before,
+      after: payload.after,
+      source: asString(payload.source, 'seller_profile_update'),
+      updatedAt: nowIso(),
+    });
+    return Boolean(id);
+  } catch (error) {
+    handleFirestoreError(error, 'logPharmacyProfileUpdate');
+    return false;
+  }
 }
 
 async function createPharmacy(payload: Dictionary): Promise<Pharmacy> {
@@ -1102,11 +1174,89 @@ async function getAnalytics(filters: FilterOptions = {}): Promise<AnalyticsData>
 
 async function processPayment(payload: Dictionary): Promise<PaymentResponse> {
   const amount = asNumber(payload.amount);
-  return {
-    success: amount >= 0,
-    transactionId: `txn-${Date.now()}`,
-    message: amount >= 0 ? 'Payment simulated successfully' : 'Invalid amount',
+  if (amount <= 0) {
+    return {
+      success: false,
+      paymentId: '',
+      transactionId: '',
+      status: 'failed',
+      method: (asString(payload.method, 'upi') as PaymentMethod) ?? 'upi',
+      message: 'Invalid payment amount',
+      failureReason: 'Amount must be greater than zero',
+    };
+  }
+
+  const method = (asString(payload.method, 'upi') as PaymentMethod) ?? 'upi';
+  const now = nowIso();
+  const paymentId = `pay-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const transactionReference = `TXN-${Date.now().toString().slice(-8)}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const forcedOutcome = asString(payload.forceOutcome).toLowerCase();
+  const demoOverride = getDemoOutcomeOverride();
+  const nextStatus: PaymentStatus =
+    forcedOutcome === 'successful' || forcedOutcome === 'failed' || forcedOutcome === 'pending'
+      ? (forcedOutcome as PaymentStatus)
+      : demoOverride || 'successful';
+
+  await setDoc(
+    doc(db, 'payments', paymentId),
+    {
+      paymentId,
+      orderId: asString(payload.orderId),
+      customerId: asString(payload.customerId),
+      pharmacyId: asString(payload.pharmacyId),
+      sellerId: asString(payload.sellerId),
+      amount,
+      currency: asString(payload.currency, 'INR'),
+      paymentMethod: method,
+      paymentStatus: 'initiated',
+      transactionReference,
+      createdAt: now,
+      updatedAt: now,
+      notes: asString(payload.notes, 'Demo payment initiated'),
+      metadata: toDictionary(payload.metadata),
+    },
+    { merge: true },
+  );
+
+  await patchDoc('payments', paymentId, {
+    paymentStatus: 'processing',
+    updatedAt: nowIso(),
+  });
+  await sleep(1200);
+
+  const updatePayload: Dictionary = {
+    paymentStatus: nextStatus,
+    updatedAt: nowIso(),
+    failureReason: nextStatus === 'failed' ? asString(payload.failureReason, 'Demo failure: simulated gateway decline') : '',
   };
+  if (nextStatus === 'successful') {
+    updatePayload.paidAt = nowIso();
+  }
+  await patchDoc('payments', paymentId, updatePayload);
+
+  return {
+    success: nextStatus === 'successful',
+    paymentId,
+    transactionId: transactionReference,
+    status: nextStatus,
+    method,
+    message:
+      nextStatus === 'successful'
+        ? 'Payment processed successfully'
+        : nextStatus === 'pending'
+          ? 'Payment is pending confirmation'
+          : 'Payment failed',
+    failureReason: nextStatus === 'failed' ? asString(updatePayload.failureReason) : undefined,
+  };
+}
+
+async function getPayments(filters: FilterOptions = {}): Promise<PaymentRecord[]> {
+  const payments = await listCollection('payments', normalizePayment, filters);
+  return [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+async function updatePayment(id: string, patch: Dictionary): Promise<boolean> {
+  return patchDoc('payments', id, { ...patch, updatedAt: nowIso() });
 }
 
 const concreteApi = {
@@ -1131,6 +1281,7 @@ const concreteApi = {
   getPharmaciesForCustomer,
   createPharmacy,
   updatePharmacy,
+  logPharmacyProfileUpdate,
   getMedicines,
   createMedicine,
   updateMedicine,
@@ -1148,6 +1299,8 @@ const concreteApi = {
 
   // customer + prescription
   processPayment,
+  getPayments,
+  updatePayment,
   createPrescription,
   getPrescriptions,
   updatePrescription,

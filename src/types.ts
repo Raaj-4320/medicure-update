@@ -91,6 +91,7 @@ export interface UserProfile {
   email: string;
   displayName: string;
   role: UserRole;
+  status?: 'active' | 'blocked';
   phoneNumber?: string;
   photoURL?: string;
   addresses: Address[];
@@ -116,7 +117,19 @@ export interface Pharmacy {
   rating: number;
   reviewCount: number;
   image: string;
+  ownerName?: string;
+  license?: string;
+  website?: string;
+  establishedYear?: string;
+  workingDays?: string;
+  mapUrl?: string;
+  verificationDetails?: {
+    ownerName?: string;
+    licenseNumber?: string;
+    [key: string]: unknown;
+  };
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface ServiceArea {
@@ -163,9 +176,12 @@ export type OrderStatus =
   | 'confirmed' 
   | 'awaiting_prescription' 
   | 'prescription_under_review' 
+  | 'dispatched'
   | 'packed' 
   | 'ready_for_pickup' 
   | 'assigned' 
+  | 'on_the_way'
+  | 'picked_up'
   | 'out_for_delivery' 
   | 'delivered' 
   | 'cancelled' 
@@ -187,6 +203,10 @@ export interface Order {
   items?: OrderItem[];
   pharmacyName?: string;
   customerName?: string;
+  paymentId?: string;
+  paymentMethod?: PaymentMethod;
+  paymentStatus?: PaymentStatus;
+  transactionReference?: string;
 }
 
 export interface OrderItem {
@@ -326,4 +346,27 @@ export interface ComplianceDocument {
   status: 'pending' | 'approved' | 'rejected';
   createdAt: string;
   updatedAt?: string;
+}
+
+export type PaymentMethod = 'cash' | 'upi' | 'card' | 'net_banking' | 'wallet';
+export type PaymentStatus = 'initiated' | 'processing' | 'successful' | 'failed' | 'pending' | 'refunded';
+
+export interface PaymentRecord {
+  id: string;
+  paymentId: string;
+  orderId?: string;
+  customerId: string;
+  pharmacyId?: string;
+  sellerId?: string;
+  amount: number;
+  currency: string;
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  transactionReference: string;
+  createdAt: string;
+  updatedAt: string;
+  paidAt?: string;
+  failureReason?: string;
+  notes?: string;
+  metadata?: Record<string, unknown>;
 }
