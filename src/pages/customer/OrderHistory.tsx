@@ -55,6 +55,13 @@ export default function OrderHistory() {
     return status.replace(/_/g, ' ').toUpperCase();
   };
 
+  const getPaymentBadge = (status: string) => {
+    if (status === 'successful') return 'bg-emerald-50 text-emerald-700';
+    if (status === 'failed') return 'bg-red-50 text-red-700';
+    if (status === 'pending' || status === 'processing' || status === 'initiated') return 'bg-amber-50 text-amber-700';
+    return 'bg-slate-100 text-slate-600';
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-6">
       <div className="flex items-center justify-between mb-8">
@@ -103,6 +110,9 @@ export default function OrderHistory() {
                 <div className="text-right">
                   <div className="text-sm font-bold text-emerald-600">₹{order.totalAmount.toFixed(2)}</div>
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{getStatusText(order.status)}</span>
+                  <div className={`mt-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full inline-block ${getPaymentBadge(order.paymentStatus || 'pending')}`}>
+                    Payment: {(order.paymentStatus || 'pending').replace('_', ' ')}
+                  </div>
                 </div>
               </div>
 
@@ -124,6 +134,11 @@ export default function OrderHistory() {
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
+              {order.transactionReference && (
+                <div className="mt-3 text-[11px] text-slate-500">
+                  Transaction Ref: <span className="font-semibold text-slate-700">{order.transactionReference}</span>
+                </div>
+              )}
             </motion.div>
           ))}
         </div>
