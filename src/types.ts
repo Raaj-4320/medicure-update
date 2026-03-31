@@ -117,7 +117,19 @@ export interface Pharmacy {
   rating: number;
   reviewCount: number;
   image: string;
+  ownerName?: string;
+  license?: string;
+  website?: string;
+  establishedYear?: string;
+  workingDays?: string;
+  mapUrl?: string;
+  verificationDetails?: {
+    ownerName?: string;
+    licenseNumber?: string;
+    [key: string]: unknown;
+  };
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface ServiceArea {

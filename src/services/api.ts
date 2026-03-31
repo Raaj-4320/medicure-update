@@ -117,6 +117,7 @@ function normalizePharmacy(id: string, data: DocumentData): Pharmacy {
   const source = toDictionary(data);
   const ownerId = asString(source.ownerId, asString(source.sellerId));
   const verificationStatus = asString(source.verificationStatus, asString(source.status, 'pending'));
+  const verificationDetails = toDictionary(source.verificationDetails);
   return {
     id,
     sellerId: ownerId,
@@ -136,7 +137,15 @@ function normalizePharmacy(id: string, data: DocumentData): Pharmacy {
     rating: asNumber(source.rating),
     reviewCount: asNumber(source.reviewCount),
     image: asString(source.image),
+    ownerName: asString(source.ownerName, asString(verificationDetails.ownerName)),
+    license: asString(source.license, asString(verificationDetails.licenseNumber)),
+    website: asString(source.website),
+    establishedYear: asString(source.establishedYear),
+    workingDays: asString(source.workingDays),
+    mapUrl: asString(source.mapUrl),
+    verificationDetails: verificationDetails as Pharmacy['verificationDetails'],
     createdAt: asString(source.createdAt, nowIso()),
+    updatedAt: asString(source.updatedAt),
   };
 }
 
@@ -618,6 +627,27 @@ async function updatePharmacy(id: string, patch: Dictionary): Promise<boolean> {
     normalizedPatch.status = patch.verificationStatus;
   }
   return patchDoc('pharmacies', id, normalizedPatch);
+}
+
+async function logPharmacyProfileUpdate(
+  pharmacyId: string,
+  payload: { sellerId?: string; changedFields: string[]; before: Dictionary; after: Dictionary; source?: string },
+): Promise<boolean> {
+  try {
+    const id = await createDoc(`pharmacies/${pharmacyId}/profileSettingsLogs`, {
+      pharmacyId,
+      sellerId: asString(payload.sellerId),
+      changedFields: payload.changedFields,
+      before: payload.before,
+      after: payload.after,
+      source: asString(payload.source, 'seller_profile_update'),
+      updatedAt: nowIso(),
+    });
+    return Boolean(id);
+  } catch (error) {
+    handleFirestoreError(error, 'logPharmacyProfileUpdate');
+    return false;
+  }
 }
 
 async function createPharmacy(payload: Dictionary): Promise<Pharmacy> {
@@ -1251,6 +1281,7 @@ const concreteApi = {
   getPharmaciesForCustomer,
   createPharmacy,
   updatePharmacy,
+  logPharmacyProfileUpdate,
   getMedicines,
   createMedicine,
   updateMedicine,
