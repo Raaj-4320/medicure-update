@@ -120,7 +120,7 @@ const PharmacyDetail: React.FC = () => {
       {/* Header Card */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="h-64 relative">
-          <img src={pharmacy.image || undefined} alt={pharmacy.name || 'Profile Incomplete'} className="w-full h-full object-cover" />
+          <img src={pharmacy.image || 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&w=1200&q=80'} alt={pharmacy.name || 'Profile Incomplete'} className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
           <div className="absolute bottom-6 left-8 text-white">
             <h1 className="text-3xl font-bold mb-2">{pharmacy.name || 'Profile Incomplete'}</h1>
@@ -178,7 +178,7 @@ const PharmacyDetail: React.FC = () => {
           {filteredMeds.map((med) => (
             <div key={med.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex gap-4 hover:border-emerald-200 transition-all">
               <div className="w-24 h-24 bg-slate-50 rounded-xl overflow-hidden flex-shrink-0">
-                <img src={med.masterData?.image} alt="" className="w-full h-full object-cover" />
+                <img src={med.masterData?.image || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=300&q=80'} alt={med.masterData?.brandName || 'Medicine'} className="w-full h-full object-cover" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between mb-1">
