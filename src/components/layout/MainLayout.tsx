@@ -97,11 +97,8 @@ const MainLayout: React.FC = () => {
         { label: 'Inventory', icon: Package, path: '/seller/inventory' },
         { label: 'Medicine Catalog', icon: Store, path: '/seller/catalog' },
         { label: 'Returns & Replacements', icon: History, path: '/seller/returns' },
-        { label: 'Payouts', icon: DollarSign, path: '/seller/payouts' },
         { label: 'Analytics', icon: Activity, path: '/seller/analytics' },
         { label: 'Store Profile', icon: Building2, path: '/seller/profile' },
-        { label: 'Compliance', icon: ShieldCheck, path: '/seller/compliance' },
-        { label: 'Support', icon: LifeBuoy, path: '/seller/support' },
         { label: 'Notifications', icon: Bell, path: '/seller/notifications' }
       );
     } else if (profile.role === 'admin') {
@@ -116,7 +113,6 @@ const MainLayout: React.FC = () => {
         { label: 'Risk & Compliance', icon: ShieldCheck, path: '/admin/compliance' },
         { label: 'Medicine Safety', icon: ShieldAlert, path: '/admin/safety' },
         { label: 'Financials', icon: DollarSign, path: '/admin/financials' },
-        { label: 'Advanced Logistics', icon: Navigation, path: '/admin/advanced-logistics' },
         { label: 'Prescriptions', icon: FileText, path: '/admin/prescriptions' }
       );
     } else if (profile.role === 'delivery') {

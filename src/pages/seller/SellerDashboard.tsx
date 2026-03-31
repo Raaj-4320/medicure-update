@@ -33,7 +33,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../../AuthContext';
 import { Order, Prescription, Notification } from '../../types';
-import { api, isPharmacyProfileComplete } from '../../services/api';
+import { api, getPharmacyCompletenessSnapshot, isPharmacyProfileComplete } from '../../services/api';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { checkExpectations, logFlow } from '../../utils/flowLogger';
@@ -105,6 +105,13 @@ const SellerDashboard: React.FC = () => {
         const isComplete = isPharmacyProfileComplete(myPharmacy as any);
         setProfileComplete(isComplete);
         if (!isComplete) {
+          const completenessDebug = getPharmacyCompletenessSnapshot(myPharmacy as any);
+          console.warn('[SELLER_PROFILE_COMPLETENESS]', {
+            expected: completenessDebug.expected,
+            resolved: completenessDebug.resolved,
+            missing: completenessDebug.missing,
+            actual: myPharmacy,
+          });
           logFlow('SELLER_PROFILE_GATE', {
             expected: ['name', 'address', 'phone', 'license', 'ownerName'],
             received: { pharmacyId: myPharmacy.id, complete: false },
@@ -203,6 +210,11 @@ const SellerDashboard: React.FC = () => {
     };
 
     fetchData();
+    const handleProfileRefresh = () => fetchData();
+    window.addEventListener('seller-profile-updated', handleProfileRefresh as EventListener);
+    return () => {
+      window.removeEventListener('seller-profile-updated', handleProfileRefresh as EventListener);
+    };
   }, [profile]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>;
@@ -440,8 +452,8 @@ const SellerDashboard: React.FC = () => {
               {[
                 { label: 'View Catalog', icon: Package, link: '/seller/catalog', color: 'emerald' },
                 { label: 'Update Stock', icon: RefreshCw, link: '/seller/inventory', color: 'blue' },
-                { label: 'View Payouts', icon: DollarSign, link: '/seller/payouts', color: 'amber' },
-                { label: 'Compliance', icon: ShieldCheck, link: '/seller/compliance', color: 'purple' },
+                { label: 'View Orders', icon: ClipboardList, link: '/seller/orders', color: 'amber' },
+                { label: 'Notifications', icon: Bell, link: '/seller/notifications', color: 'purple' },
               ].map((action, i) => (
                 <Link 
                   key={i}

@@ -175,7 +175,7 @@ const AdminDashboard: React.FC = () => {
           { name: 'Compliance', path: '/admin/compliance', icon: ShieldCheck, color: 'bg-blue-50 text-blue-600' },
           { name: 'Safety', path: '/admin/safety', icon: ShieldAlert, color: 'bg-red-50 text-red-600' },
           { name: 'Financials', path: '/admin/financials', icon: DollarSign, color: 'bg-emerald-50 text-emerald-600' },
-          { name: 'Logistics', path: '/admin/advanced-logistics', icon: Truck, color: 'bg-orange-50 text-orange-600' },
+          { name: 'Logistics', path: '/admin/logistics', icon: Truck, color: 'bg-orange-50 text-orange-600' },
           { name: 'Prescriptions', path: '/admin/prescriptions', icon: FileText, color: 'bg-purple-50 text-purple-600' }
         ].map((module) => (
           <Link 
