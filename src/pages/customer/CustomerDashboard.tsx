@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   ShoppingBag, 
   MapPin, 
@@ -20,7 +20,8 @@ import { api } from '../../services/api';
 
 const CustomerDashboard: React.FC = () => {
   const { profile } = useAuth();
-  const { location } = useLocation();
+  const { location, setLocation } = useLocation();
+  const navigate = useNavigate();
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [nearbyPharmacies, setNearbyPharmacies] = useState<Pharmacy[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +39,23 @@ const CustomerDashboard: React.FC = () => {
 
     fetchData().catch(() => setLoading(false));
   }, [profile, location]);
+
+  const handleChangeLocation = () => {
+    const city = window.prompt('Enter city', location?.city || 'Bangalore');
+    if (!city) return;
+    const area = window.prompt('Enter area', location?.area || 'Downtown');
+    if (!area) return;
+    setLocation({
+      country: location?.country || 'India',
+      state: location?.state || 'Karnataka',
+      city,
+      area,
+      locality: location?.locality || area,
+      pincode: location?.pincode || '560001',
+      landmark: location?.landmark || '',
+    });
+    logUI('ACTION', { component: 'CustomerDashboard', action: 'Change Location', success: true });
+  };
 
   return (
     <div className="space-y-8">
@@ -127,15 +145,7 @@ const CustomerDashboard: React.FC = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() =>
-                    logUI('ACTION', {
-                      component: 'CustomerDashboard',
-                      action: 'Change Location',
-                      expected: 'should open location selector',
-                      status: 'partial',
-                      reason: 'Location selector route not implemented yet',
-                    })
-                  }
+                  onClick={handleChangeLocation}
                   className="w-full py-2 text-sm font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors"
                 >
                   Change Location
@@ -149,7 +159,7 @@ const CustomerDashboard: React.FC = () => {
           <div className="bg-slate-900 p-6 rounded-2xl text-white">
             <h3 className="font-bold mb-2">Need Help?</h3>
             <p className="text-xs text-slate-400 mb-4">Our support team is available 24/7 for your medical queries.</p>
-            <button className="w-full py-2 bg-white/10 hover:bg-white/20 text-white text-sm font-bold rounded-lg transition-all">
+            <button onClick={() => navigate('/orders')} className="w-full py-2 bg-white/10 hover:bg-white/20 text-white text-sm font-bold rounded-lg transition-all">
               Contact Support
             </button>
           </div>

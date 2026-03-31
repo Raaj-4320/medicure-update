@@ -19,6 +19,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Prescription } from '../../types';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
+import SellerAccessState from '../../components/seller/SellerAccessState';
+import { logRouteState } from '../../utils/flowLogger';
 
 const PrescriptionManagement: React.FC = () => {
   const { profile } = useAuth();
@@ -29,6 +31,7 @@ const PrescriptionManagement: React.FC = () => {
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [accessState, setAccessState] = useState<'ok' | 'missing' | 'pending' | 'rejected'>('ok');
 
   useEffect(() => {
     const load = async () => {
@@ -60,8 +63,19 @@ const PrescriptionManagement: React.FC = () => {
     if (!pharmacies.length) {
       setErrorMessage('No pharmacy found for this seller account.');
       setPrescriptions([]);
+      setAccessState('missing');
+      logRouteState({ route: '/seller/prescriptions', state: 'blocked', reason: 'NO_PHARMACY' });
       return;
     }
+    const pharmacyStatus = pharmacies[0].status || pharmacies[0].verificationStatus || 'pending';
+    if (pharmacyStatus !== 'verified') {
+      setPrescriptions([]);
+      setAccessState(pharmacyStatus === 'rejected' ? 'rejected' : 'pending');
+      logRouteState({ route: '/seller/prescriptions', state: 'blocked', reason: `PHARMACY_${String(pharmacyStatus).toUpperCase()}` });
+      return;
+    }
+    setAccessState('ok');
+    logRouteState({ route: '/seller/prescriptions', state: 'ok', detail: { pharmacyId: pharmacies[0].id } });
     setErrorMessage('');
     const data = await api.getPrescriptions({ pharmacyId: pharmacies[0].id });
     setPrescriptions(data as Prescription[]);
@@ -82,6 +96,7 @@ const PrescriptionManagement: React.FC = () => {
   };
 
   return (
+    accessState !== 'ok' ? <SellerAccessState mode={accessState} /> : (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -288,6 +303,7 @@ const PrescriptionManagement: React.FC = () => {
         )}
       </AnimatePresence>
     </div>
+    )
   );
 };
 
