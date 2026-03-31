@@ -3,13 +3,15 @@ import { Search } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
-import { logFlow } from '../../utils/flowLogger';
+import { logFlow, logRouteState } from '../../utils/flowLogger';
+import SellerAccessState from '../../components/seller/SellerAccessState';
 
 const SellerCatalog: React.FC = () => {
   const { profile } = useAuth();
   const [inventory, setInventory] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [accessState, setAccessState] = useState<'ok' | 'missing' | 'pending' | 'rejected'>('ok');
 
   const loadData = async () => {
     if (!profile?.uid) return;
@@ -18,8 +20,19 @@ const SellerCatalog: React.FC = () => {
     if (!pharmacy) {
       setErrorMessage('No pharmacy found');
       setInventory([]);
+      setAccessState('missing');
+      logRouteState({ route: '/seller/catalog', state: 'blocked', reason: 'NO_PHARMACY' });
       return;
     }
+    const pharmacyStatus = pharmacy.status || pharmacy.verificationStatus || 'pending';
+    if (pharmacyStatus !== 'verified') {
+      setInventory([]);
+      setAccessState(pharmacyStatus === 'rejected' ? 'rejected' : 'pending');
+      logRouteState({ route: '/seller/catalog', state: 'blocked', reason: `PHARMACY_${String(pharmacyStatus).toUpperCase()}` });
+      return;
+    }
+    setAccessState('ok');
+    logRouteState({ route: '/seller/catalog', state: 'ok', detail: { pharmacyId: pharmacy.id } });
     setErrorMessage('');
 
     const [items, masters] = await Promise.all([
@@ -58,6 +71,7 @@ const SellerCatalog: React.FC = () => {
   }, [profile]);
 
   const filtered = inventory.filter((item: any) => `${item.masterData?.brandName || ''} ${item.masterData?.genericName || ''}`.toLowerCase().includes(searchQuery.toLowerCase()));
+  if (accessState !== 'ok') return <SellerAccessState mode={accessState} />;
 
   return (
     <div className="space-y-6">
