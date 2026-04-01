@@ -19,11 +19,14 @@ import {
   ChevronRight,
   Loader2
 } from 'lucide-react';
-import { UserProfile } from '../../types';
+import { UserProfile, UserRole } from '../../types';
 import { api } from '../../services/api';
 import { motion, AnimatePresence } from 'motion/react';
 
 const UserManagement: React.FC = () => {
+  const isUserRole = (value: string): value is UserRole =>
+    ['admin', 'seller', 'customer', 'delivery', 'pharmacist', 'compliance_officer', 'logistics_manager', 'support_agent'].includes(value);
+
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -154,7 +157,8 @@ const UserManagement: React.FC = () => {
               const email = window.prompt('Email');
               if (!email) return;
               const displayName = window.prompt('Display name', email.split('@')[0]) || email.split('@')[0];
-              const role = window.prompt('Role (admin/seller/customer/delivery)', 'customer') || 'customer';
+              const roleInput = window.prompt('Role (admin/seller/customer/delivery)', 'customer') || 'customer';
+              const role: UserRole = isUserRole(roleInput) ? roleInput : 'customer';
               const id = `user-${Date.now()}`;
               await api.createUser({ id, uid: id, email, displayName, role, status: 'active', addresses: [] });
               await fetchUsers();

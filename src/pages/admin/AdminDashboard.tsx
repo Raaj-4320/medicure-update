@@ -48,6 +48,7 @@ const AdminDashboard: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
   const [chartReady, setChartReady] = useState(false);
+  const [recentOrders, setRecentOrders] = useState<any[]>([]);
 
   useEffect(() => {
     setChartReady(true);
@@ -73,6 +74,11 @@ const AdminDashboard: React.FC = () => {
           fraudAlerts: 0,
           pendingPrescriptions: orders.filter((o: any) => o.prescriptionUrl).length
         });
+        setRecentOrders(
+          [...orders]
+            .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+            .slice(0, 8),
+        );
       } catch (error) {
         console.error('Failed to fetch admin stats:', error);
       } finally {
@@ -169,13 +175,60 @@ const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
+
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-slate-900">Recent Orders Monitoring</h3>
+          <span className="text-xs text-slate-500">Live from Firestore orders</span>
+        </div>
+        {recentOrders.length === 0 ? (
+          <p className="text-sm text-slate-500">No recent orders to monitor yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-xs uppercase text-slate-500 border-b border-slate-100">
+                  <th className="py-2 font-semibold">Order</th>
+                  <th className="py-2 font-semibold">Pharmacy</th>
+                  <th className="py-2 font-semibold">Customer</th>
+                  <th className="py-2 font-semibold">Payment</th>
+                  <th className="py-2 font-semibold">Status</th>
+                  <th className="py-2 font-semibold">Created</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {recentOrders.map((order) => (
+                  <tr key={order.id} className="text-sm">
+                    <td className="py-2 font-semibold text-slate-900">#{order.id}</td>
+                    <td className="py-2 text-slate-600">{order.pharmacyId || '-'}</td>
+                    <td className="py-2 text-slate-600">{order.customerId || '-'}</td>
+                    <td className="py-2 text-slate-600">
+                      {(order.paymentStatus || 'pending').toUpperCase()}
+                      {order.paymentMethod ? ` • ${String(order.paymentMethod).replace('_', ' ').toUpperCase()}` : ''}
+                    </td>
+                    <td className="py-2">
+                      <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 text-[11px] font-semibold uppercase">
+                        {String(order.status || 'pending').replace('_', ' ')}
+                      </span>
+                    </td>
+                    <td className="py-2 text-slate-500">
+                      {order.createdAt ? new Date(order.createdAt).toLocaleString() : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Module Quick Access */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {[
           { name: 'Compliance', path: '/admin/compliance', icon: ShieldCheck, color: 'bg-blue-50 text-blue-600' },
           { name: 'Safety', path: '/admin/safety', icon: ShieldAlert, color: 'bg-red-50 text-red-600' },
           { name: 'Financials', path: '/admin/financials', icon: DollarSign, color: 'bg-emerald-50 text-emerald-600' },
-          { name: 'Logistics', path: '/admin/advanced-logistics', icon: Truck, color: 'bg-orange-50 text-orange-600' },
+          { name: 'Logistics', path: '/admin/logistics', icon: Truck, color: 'bg-orange-50 text-orange-600' },
           { name: 'Prescriptions', path: '/admin/prescriptions', icon: FileText, color: 'bg-purple-50 text-purple-600' }
         ].map((module) => (
           <Link 

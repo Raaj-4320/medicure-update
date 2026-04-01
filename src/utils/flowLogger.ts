@@ -12,6 +12,7 @@ type FlowInput = {
   expectedKeys?: string[];
   suggestion?: string;
   partialType?: 'NOT_IMPLEMENTED' | 'DATA_MISSING' | 'UI_INCOMPLETE';
+  allowEmpty?: boolean;
 };
 
 const FLOW_DEDUP_WINDOW_MS = 1500;
@@ -30,8 +31,10 @@ const inferStatus = (input: FlowInput): FlowStatus => {
   if (input.success === false || input.error) return 'fail';
 
   const received = input.received;
-  if (Array.isArray(received) && received.length === 0) return 'fail';
-  if (isObject(received) && 'count' in received && Number((received as Record<string, unknown>).count) === 0) return 'fail';
+  if (!input.allowEmpty) {
+    if (Array.isArray(received) && received.length === 0) return 'fail';
+    if (isObject(received) && 'count' in received && Number((received as Record<string, unknown>).count) === 0) return 'fail';
+  }
   if (input.requiredFields?.length && !hasRequiredFields(received, input.requiredFields)) return 'partial';
 
   return 'success';
@@ -171,6 +174,20 @@ export const checkExpectations = (params: {
     console.info('[SUGGESTION]', `Ensure ${missing.join(', ')} is loaded in ${params.page}`);
     console.groupEnd();
   }
+};
+
+export const logRouteState = (params: {
+  route: string;
+  state: 'ok' | 'blocked' | 'error';
+  reason?: string;
+  detail?: unknown;
+}): void => {
+  const method = params.state === 'error' ? console.error : params.state === 'blocked' ? console.warn : console.info;
+  console.group(`[ROUTE][${params.route}]`);
+  method('STATE:', params.state.toUpperCase());
+  if (params.reason) method('REASON:', params.reason);
+  if (params.detail !== undefined) console.log('DETAIL:', params.detail);
+  console.groupEnd();
 };
 
 export const validateRequiredFields = (

@@ -22,6 +22,9 @@ import type {
   MedicineMaster,
   Notification,
   Order,
+  PaymentMethod,
+  PaymentRecord,
+  PaymentStatus,
   Pharmacy,
   Prescription,
   ReturnRequest,
@@ -37,8 +40,12 @@ type FilterOptions = Record<string, string | number | boolean | undefined>;
 
 type PaymentResponse = {
   success: boolean;
+  paymentId: string;
   transactionId: string;
+  status: PaymentStatus;
+  method: PaymentMethod;
   message?: string;
+  failureReason?: string;
 };
 
 type AnalyticsData = {
@@ -57,6 +64,52 @@ const FALLBACK_ANALYTICS: AnalyticsData = {
 
 const makeTraceId = (prefix: 'ord' | 'inv' | 'noti'): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const isBrowser = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+const LOCAL_CACHE_PREFIX = 'medicure_cache_v1';
+
+function stableSerialize(input: unknown): string {
+  if (Array.isArray(input)) {
+    return `[${input.map((entry) => stableSerialize(entry)).join(',')}]`;
+  }
+  if (input && typeof input === 'object') {
+    const entries = Object.entries(input as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, value]) => `${key}:${stableSerialize(value)}`).join(',')}}`;
+  }
+  return JSON.stringify(input);
+}
+
+function makeCacheKey(entity: string, filters?: FilterOptions): string {
+  return `${LOCAL_CACHE_PREFIX}:${entity}:${stableSerialize(filters || {})}`;
+}
+
+function readCache<T>(entity: string, filters?: FilterOptions): T[] {
+  if (!isBrowser) return [];
+  try {
+    const raw = window.localStorage.getItem(makeCacheKey(entity, filters));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCache<T>(entity: string, filters: FilterOptions | undefined, value: T[]): void {
+  if (!isBrowser) return;
+  try {
+    window.localStorage.setItem(makeCacheKey(entity, filters), JSON.stringify(Array.isArray(value) ? value : []));
+  } catch {
+    // no-op: local cache is best effort
+  }
+}
+
+function getDemoOutcomeOverride(): PaymentStatus | null {
+  const explicit = typeof localStorage !== 'undefined' ? localStorage.getItem('demo_payment_outcome') : null;
+  const valid = explicit === 'successful' || explicit === 'failed' || explicit === 'pending';
+  return valid ? (explicit as PaymentStatus) : null;
+}
 
 function toDictionary(value: unknown): Dictionary {
   if (value && typeof value === 'object') {
@@ -102,18 +155,29 @@ function normalizePharmacy(id: string, data: DocumentData): Pharmacy {
   const source = toDictionary(data);
   const ownerId = asString(source.ownerId, asString(source.sellerId));
   const verificationStatus = asString(source.verificationStatus, asString(source.status, 'pending'));
+  const verificationDetails = toDictionary(source.verificationDetails);
+  const normalizedAddress = toDictionary(source.address);
+  if (Object.keys(normalizedAddress).length === 0 && asString(source.address)) {
+    normalizedAddress.addressLine = asString(source.address);
+  }
+  if (!asString(verificationDetails.ownerName) && asString(source.ownerName)) {
+    verificationDetails.ownerName = asString(source.ownerName);
+  }
+  if (!asString(verificationDetails.licenseNumber) && asString(source.license)) {
+    verificationDetails.licenseNumber = asString(source.license);
+  }
   return {
     id,
     sellerId: ownerId,
     ownerId,
     name: asString(source.name),
     description: asString(source.description),
-    address: toDictionary(source.address) as Pharmacy['address'],
-    contactNumber: asString(source.contactNumber),
+    address: normalizedAddress as Pharmacy['address'],
+    contactNumber: asString(source.contactNumber, asString(source.phone)),
     email: asString(source.email),
     operatingHours: asString(source.operatingHours),
     verificationStatus: (verificationStatus as Pharmacy['verificationStatus']) ?? 'pending',
-    status: verificationStatus,
+    status: (verificationStatus as Pharmacy['status']) ?? 'pending',
     deliveryAvailable: asBoolean(source.deliveryAvailable),
     pickupAvailable: asBoolean(source.pickupAvailable),
     minOrderValue: asNumber(source.minOrderValue),
@@ -121,7 +185,15 @@ function normalizePharmacy(id: string, data: DocumentData): Pharmacy {
     rating: asNumber(source.rating),
     reviewCount: asNumber(source.reviewCount),
     image: asString(source.image),
+    ownerName: asString(source.ownerName, asString(verificationDetails.ownerName)),
+    license: asString(source.license, asString(verificationDetails.licenseNumber)),
+    website: asString(source.website),
+    establishedYear: asString(source.establishedYear),
+    workingDays: asString(source.workingDays),
+    mapUrl: asString(source.mapUrl),
+    verificationDetails: verificationDetails as Pharmacy['verificationDetails'],
     createdAt: asString(source.createdAt, nowIso()),
+    updatedAt: asString(source.updatedAt),
   };
 }
 
@@ -131,14 +203,36 @@ function hasAddressValue(address: unknown): boolean {
 }
 
 export function isPharmacyProfileComplete(pharmacy: Partial<Pharmacy> & { verificationDetails?: Dictionary }): boolean {
+  const snapshot = getPharmacyCompletenessSnapshot(pharmacy);
+  return snapshot.missing.length === 0;
+}
+
+export function getPharmacyCompletenessSnapshot(pharmacy: Partial<Pharmacy> & { verificationDetails?: Dictionary }): {
+  expected: string[];
+  resolved: Record<string, string>;
+  missing: string[];
+} {
   const verificationDetails = toDictionary(pharmacy.verificationDetails);
-  return Boolean(
-    asString(pharmacy.name).trim() &&
-      hasAddressValue(pharmacy.address) &&
-      asString((pharmacy as Dictionary).phone || pharmacy.contactNumber).trim() &&
-      asString(verificationDetails.licenseNumber || (pharmacy as Dictionary).license).trim() &&
-      asString(verificationDetails.ownerName || (pharmacy as Dictionary).ownerName).trim(),
-  );
+  const address = toDictionary(pharmacy.address);
+  const phoneValue = asString((pharmacy as Dictionary).phone || pharmacy.contactNumber);
+  const licenseValue = asString(verificationDetails.licenseNumber || (pharmacy as Dictionary).license);
+  const ownerValue = asString(verificationDetails.ownerName || (pharmacy as Dictionary).ownerName);
+  const addressValue = asString((pharmacy as Dictionary).address || address.addressLine || address.line1 || address.street);
+  const resolved = {
+    name: asString(pharmacy.name).trim(),
+    address: addressValue.trim(),
+    phone: phoneValue.trim(),
+    license: licenseValue.trim(),
+    ownerName: ownerValue.trim(),
+  };
+  const expected = ['name', 'address', 'phone', 'license', 'ownerName'];
+  const missing = expected.filter((key) => !resolved[key as keyof typeof resolved]);
+  if (!resolved.address && hasAddressValue(address)) {
+    resolved.address = '[address object has non-empty values]';
+    const idx = missing.indexOf('address');
+    if (idx >= 0) missing.splice(idx, 1);
+  }
+  return { expected, resolved, missing };
 }
 
 export function isPharmacyOperational(pharmacy: Partial<Pharmacy> & { verificationDetails?: Dictionary }): boolean {
@@ -197,6 +291,10 @@ function normalizeOrder(id: string, data: DocumentData): Order {
     items: Array.isArray(source.items) ? (source.items as Order['items']) : [],
     pharmacyName: asString(source.pharmacyName),
     customerName: asString(source.customerName),
+    paymentId: asString(source.paymentId),
+    paymentMethod: (asString(source.paymentMethod, 'upi') as PaymentMethod) ?? 'upi',
+    paymentStatus: (asString(source.paymentStatus, 'pending') as PaymentStatus) ?? 'pending',
+    transactionReference: asString(source.transactionReference),
   };
 }
 
@@ -312,6 +410,29 @@ function normalizeDeliveryAssignment(id: string, data: DocumentData): DeliveryAs
   };
 }
 
+function normalizePayment(id: string, data: DocumentData): PaymentRecord {
+  const source = toDictionary(data);
+  return {
+    id,
+    paymentId: asString(source.paymentId, id),
+    orderId: asString(source.orderId),
+    customerId: asString(source.customerId),
+    pharmacyId: asString(source.pharmacyId),
+    sellerId: asString(source.sellerId),
+    amount: asNumber(source.amount),
+    currency: asString(source.currency, 'INR'),
+    paymentMethod: (asString(source.paymentMethod, 'upi') as PaymentMethod) ?? 'upi',
+    paymentStatus: (asString(source.paymentStatus, 'initiated') as PaymentStatus) ?? 'initiated',
+    transactionReference: asString(source.transactionReference),
+    createdAt: asString(source.createdAt, nowIso()),
+    updatedAt: asString(source.updatedAt, nowIso()),
+    paidAt: asString(source.paidAt),
+    failureReason: asString(source.failureReason),
+    notes: asString(source.notes),
+    metadata: toDictionary(source.metadata),
+  };
+}
+
 function handleFirestoreError(error: unknown, label: string): void {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('requires an index')) {
@@ -321,7 +442,7 @@ function handleFirestoreError(error: unknown, label: string): void {
   console.error(`Error in ${label}:`, error);
 }
 
-function applyFilters<T extends Dictionary>(rows: T[], filters: FilterOptions = {}): T[] {
+function applyFilters<T>(rows: T[], filters: FilterOptions = {}): T[] {
   const active = Object.entries(filters).filter(([, value]) => value !== undefined);
   if (active.length === 0) {
     return rows;
@@ -330,7 +451,7 @@ function applyFilters<T extends Dictionary>(rows: T[], filters: FilterOptions = 
   return rows.filter((row) =>
     active.every(([key, value]) => {
       if (value === undefined) return true;
-      return row[key] === value;
+      return (row as Dictionary)[key] === value;
     }),
   );
 }
@@ -353,7 +474,7 @@ async function listCollection<T>(
     const rows = snapshot.docs.map((entry) => normalize(entry.id, entry.data()));
 
     if (constraints.length === 0) {
-      return applyFilters(rows as Dictionary[] as T[], filters);
+      return applyFilters(rows, filters);
     }
 
     return rows;
@@ -462,6 +583,7 @@ async function getPharmacies(filters: FilterOptions = {}): Promise<Pharmacy[]> {
         received: { count: ownerMatches.length, validCount: validOwnerMatches.length },
         status: validOwnerMatches.length === ownerMatches.length ? 'success' : 'partial',
       });
+      writeCache<Pharmacy>('pharmacies', normalizedFilters, validOwnerMatches);
       return validOwnerMatches;
     }
 
@@ -481,7 +603,9 @@ async function getPharmacies(filters: FilterOptions = {}): Promise<Pharmacy[]> {
           received: { count: 1 },
           success: true,
         });
-        return [normalized];
+        const directResult = [normalized];
+        writeCache<Pharmacy>('pharmacies', normalizedFilters, directResult);
+        return directResult;
       }
     } catch (error) {
       handleFirestoreError(error, 'getPharmacies:docFallback');
@@ -504,6 +628,7 @@ async function getPharmacies(filters: FilterOptions = {}): Promise<Pharmacy[]> {
         received: { count: migrated.length },
         success: true,
       });
+      writeCache<Pharmacy>('pharmacies', normalizedFilters, migrated);
       return migrated;
     }
 
@@ -513,6 +638,16 @@ async function getPharmacies(filters: FilterOptions = {}): Promise<Pharmacy[]> {
       success: false,
       error: 'No pharmacy found',
     });
+    const fallback = readCache<Pharmacy>('pharmacies', normalizedFilters);
+    if (fallback.length > 0) {
+      logFlow('GET_PHARMACIES_CACHE_FALLBACK', {
+        expected: { filters: normalizedFilters },
+        received: { count: fallback.length, reason: 'no-db-data' },
+        status: 'partial',
+        partialType: 'DATA_MISSING',
+      });
+      return fallback;
+    }
     return [];
   }
 
@@ -530,10 +665,25 @@ async function getPharmacies(filters: FilterOptions = {}): Promise<Pharmacy[]> {
       received: { count: merged.length },
       success: true,
     });
+    writeCache<Pharmacy>('pharmacies', normalizedFilters, merged);
     return merged;
   }
 
   const data = await listCollection('pharmacies', normalizePharmacy, normalizedFilters);
+  if (data.length > 0) {
+    writeCache<Pharmacy>('pharmacies', normalizedFilters, data);
+  } else {
+    const fallback = readCache<Pharmacy>('pharmacies', normalizedFilters);
+    if (fallback.length > 0) {
+      logFlow('GET_PHARMACIES_CACHE_FALLBACK', {
+        expected: { filters: normalizedFilters },
+        received: { count: fallback.length, reason: 'empty-db-response' },
+        status: 'partial',
+        partialType: 'DATA_MISSING',
+      });
+      return fallback;
+    }
+  }
   logFlow('GET_PHARMACIES', {
     expected: { filters: normalizedFilters },
     received: { count: data.length },
@@ -554,15 +704,20 @@ async function getPharmaciesForCustomer(): Promise<Pharmacy[]> {
       };
     }),
   );
-  const visiblePharmacies = visibilityChecks
+  const strictVisible = visibilityChecks
     .filter((entry) => entry.inventoryCount > 0 && entry.isComplete)
     .map((entry) => entry.pharmacy);
+  const visiblePharmacies = strictVisible.length > 0
+    ? strictVisible
+    : visibilityChecks.map((entry) => entry.pharmacy);
   logFlow('GET_PHARMACIES_FOR_CUSTOMER', {
     expected: ['verified pharmacy with complete profile and inventory > 0'],
-    received: { count: visiblePharmacies.length, sourceCount: verifiedPharmacies.length },
-    status: visiblePharmacies.length > 0 ? 'success' : 'partial',
-    partialType: visiblePharmacies.length > 0 ? undefined : 'DATA_MISSING',
-    suggestion: 'Add inventory and complete profile details for verified pharmacies.',
+    received: { count: visiblePharmacies.length, sourceCount: verifiedPharmacies.length, strictCount: strictVisible.length },
+    status: visiblePharmacies.length > 0 ? (strictVisible.length > 0 ? 'success' : 'partial') : 'partial',
+    partialType: visiblePharmacies.length > 0 && strictVisible.length === 0 ? 'UI_INCOMPLETE' : (visiblePharmacies.length > 0 ? undefined : 'DATA_MISSING'),
+    suggestion: strictVisible.length === 0
+      ? 'Showing verified pharmacies fallback because strict inventory/profile checks returned empty.'
+      : 'Add inventory and complete profile details for verified pharmacies.',
   });
   return visiblePharmacies;
 }
@@ -576,6 +731,27 @@ async function updatePharmacy(id: string, patch: Dictionary): Promise<boolean> {
     normalizedPatch.status = patch.verificationStatus;
   }
   return patchDoc('pharmacies', id, normalizedPatch);
+}
+
+async function logPharmacyProfileUpdate(
+  pharmacyId: string,
+  payload: { sellerId?: string; changedFields: string[]; before: Dictionary; after: Dictionary; source?: string },
+): Promise<boolean> {
+  try {
+    const id = await createDoc(`pharmacies/${pharmacyId}/profileSettingsLogs`, {
+      pharmacyId,
+      sellerId: asString(payload.sellerId),
+      changedFields: payload.changedFields,
+      before: payload.before,
+      after: payload.after,
+      source: asString(payload.source, 'seller_profile_update'),
+      updatedAt: nowIso(),
+    });
+    return Boolean(id);
+  } catch (error) {
+    handleFirestoreError(error, 'logPharmacyProfileUpdate');
+    return false;
+  }
 }
 
 async function createPharmacy(payload: Dictionary): Promise<Pharmacy> {
@@ -624,9 +800,15 @@ async function getMedicines(filters: FilterOptions = {}): Promise<MedicineMaster
   delete normalizedFilters.includeAll;
   const medicineMaster = await listCollection('medicine_master', normalizeMedicine, normalizedFilters);
   if (medicineMaster.length > 0) {
+    writeCache<MedicineMaster>('medicine_master', normalizedFilters, medicineMaster);
     return medicineMaster;
   }
-  return listCollection('medicines', normalizeMedicine, normalizedFilters);
+  const medicines = await listCollection('medicines', normalizeMedicine, normalizedFilters);
+  if (medicines.length > 0) {
+    writeCache<MedicineMaster>('medicine_master', normalizedFilters, medicines);
+    return medicines;
+  }
+  return readCache<MedicineMaster>('medicine_master', normalizedFilters);
 }
 
 async function createMedicine(payload: Dictionary): Promise<Dictionary> {
@@ -689,7 +871,11 @@ async function getInventory(filters: FilterOptions = {}): Promise<SellerMedicine
     }
     return isValid;
   });
-  return validInventory;
+  if (validInventory.length > 0) {
+    writeCache<SellerMedicine>('inventory', filters, validInventory);
+    return validInventory;
+  }
+  return readCache<SellerMedicine>('inventory', filters);
 }
 
 async function updateInventory(id: string, patch: Dictionary): Promise<boolean> {
@@ -787,7 +973,13 @@ async function createOrder(payload: Dictionary): Promise<Order> {
 
 async function getOrders(filters: FilterOptions = {}): Promise<Order[]> {
   const orders = await listCollection('orders', normalizeOrder, filters);
-  return [...orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const sortedOrders = [...orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (sortedOrders.length > 0) {
+    writeCache<Order>('orders', filters, sortedOrders);
+    return sortedOrders;
+  }
+  const fallback = readCache<Order>('orders', filters);
+  return [...fallback].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 async function getOrderById(id: string): Promise<Order | null> {
@@ -860,6 +1052,7 @@ function subscribeToOrders(filters: FilterOptions, callback: (orders: Order[]) =
         const orders = snap.docs
           .map((entry) => normalizeOrder(entry.id, entry.data()))
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        writeCache<Order>('orders', filters, orders);
         orders.forEach((order) => {
           if (order.traceId) {
             logTraceFlow('SUBSCRIBE_ORDERS', order.traceId, { stage: 'SNAPSHOT', detail: { orderId: order.id } });
@@ -867,12 +1060,12 @@ function subscribeToOrders(filters: FilterOptions, callback: (orders: Order[]) =
         });
         callback(orders);
       },
-      () => callback([]),
+      () => callback(readCache<Order>('orders', filters)),
     );
     return () => unsubscribe();
   } catch (error) {
     handleFirestoreError(error, 'subscribeToOrders');
-    callback([]);
+    callback(readCache<Order>('orders', filters));
     return () => undefined;
   }
 }
@@ -1102,11 +1295,89 @@ async function getAnalytics(filters: FilterOptions = {}): Promise<AnalyticsData>
 
 async function processPayment(payload: Dictionary): Promise<PaymentResponse> {
   const amount = asNumber(payload.amount);
-  return {
-    success: amount >= 0,
-    transactionId: `txn-${Date.now()}`,
-    message: amount >= 0 ? 'Payment simulated successfully' : 'Invalid amount',
+  if (amount <= 0) {
+    return {
+      success: false,
+      paymentId: '',
+      transactionId: '',
+      status: 'failed',
+      method: (asString(payload.method, 'upi') as PaymentMethod) ?? 'upi',
+      message: 'Invalid payment amount',
+      failureReason: 'Amount must be greater than zero',
+    };
+  }
+
+  const method = (asString(payload.method, 'upi') as PaymentMethod) ?? 'upi';
+  const now = nowIso();
+  const paymentId = `pay-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const transactionReference = `TXN-${Date.now().toString().slice(-8)}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const forcedOutcome = asString(payload.forceOutcome).toLowerCase();
+  const demoOverride = getDemoOutcomeOverride();
+  const nextStatus: PaymentStatus =
+    forcedOutcome === 'successful' || forcedOutcome === 'failed' || forcedOutcome === 'pending'
+      ? (forcedOutcome as PaymentStatus)
+      : demoOverride || 'successful';
+
+  await setDoc(
+    doc(db, 'payments', paymentId),
+    {
+      paymentId,
+      orderId: asString(payload.orderId),
+      customerId: asString(payload.customerId),
+      pharmacyId: asString(payload.pharmacyId),
+      sellerId: asString(payload.sellerId),
+      amount,
+      currency: asString(payload.currency, 'INR'),
+      paymentMethod: method,
+      paymentStatus: 'initiated',
+      transactionReference,
+      createdAt: now,
+      updatedAt: now,
+      notes: asString(payload.notes, 'Demo payment initiated'),
+      metadata: toDictionary(payload.metadata),
+    },
+    { merge: true },
+  );
+
+  await patchDoc('payments', paymentId, {
+    paymentStatus: 'processing',
+    updatedAt: nowIso(),
+  });
+  await sleep(1200);
+
+  const updatePayload: Dictionary = {
+    paymentStatus: nextStatus,
+    updatedAt: nowIso(),
+    failureReason: nextStatus === 'failed' ? asString(payload.failureReason, 'Demo failure: simulated gateway decline') : '',
   };
+  if (nextStatus === 'successful') {
+    updatePayload.paidAt = nowIso();
+  }
+  await patchDoc('payments', paymentId, updatePayload);
+
+  return {
+    success: nextStatus === 'successful',
+    paymentId,
+    transactionId: transactionReference,
+    status: nextStatus,
+    method,
+    message:
+      nextStatus === 'successful'
+        ? 'Payment processed successfully'
+        : nextStatus === 'pending'
+          ? 'Payment is pending confirmation'
+          : 'Payment failed',
+    failureReason: nextStatus === 'failed' ? asString(updatePayload.failureReason) : undefined,
+  };
+}
+
+async function getPayments(filters: FilterOptions = {}): Promise<PaymentRecord[]> {
+  const payments = await listCollection('payments', normalizePayment, filters);
+  return [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+async function updatePayment(id: string, patch: Dictionary): Promise<boolean> {
+  return patchDoc('payments', id, { ...patch, updatedAt: nowIso() });
 }
 
 const concreteApi = {
@@ -1131,6 +1402,7 @@ const concreteApi = {
   getPharmaciesForCustomer,
   createPharmacy,
   updatePharmacy,
+  logPharmacyProfileUpdate,
   getMedicines,
   createMedicine,
   updateMedicine,
@@ -1148,6 +1420,8 @@ const concreteApi = {
 
   // customer + prescription
   processPayment,
+  getPayments,
+  updatePayment,
   createPrescription,
   getPrescriptions,
   updatePrescription,
