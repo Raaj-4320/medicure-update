@@ -12,28 +12,113 @@ import {
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
 import { motion } from 'motion/react';
+import { appLogger } from '../../utils/observability';
+import OrderDetailsModal from '../../components/OrderDetailsModal';
 
 export default function OrderHistory() {
   const { profile } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [userNameMap, setUserNameMap] = useState<Record<string, string>>({});
+  const [pharmacyNameMap, setPharmacyNameMap] = useState<Record<string, string>>({});
+  const [medicineNameMap, setMedicineNameMap] = useState<Record<string, string>>({});
+
+
+  const hydrateNames = async (orderList: any[]) => {
+    const [users, pharmacies, medicines] = await Promise.all([api.getUsers(), api.getPharmacies(), api.getMedicines()]);
+    const customerIds = new Set(orderList.map((o: any) => String(o.customerId || '')).filter(Boolean));
+    const pharmacyIds = new Set(orderList.map((o: any) => String(o.pharmacyId || '')).filter(Boolean));
+
+    const medicineIds = new Set(
+      orderList.flatMap((o: any) => (Array.isArray(o.items) ? o.items : []))
+        .flatMap((item: any) => [String(item?.medicineMasterId || ''), String(item?.medicineId || '')])
+        .filter(Boolean)
+    );
+
+    const nextUserMap: Record<string, string> = {};
+    users.forEach((user: any) => {
+      const id = String(user?.uid || user?.id || '');
+      if (id && customerIds.has(id)) {
+        nextUserMap[id] = user.displayName || user.name || user.fullName || id;
+      }
+    });
+
+    const nextPharmacyMap: Record<string, string> = {};
+    pharmacies.forEach((pharmacy: any) => {
+      const id = String(pharmacy?.id || '');
+      if (id && pharmacyIds.has(id)) {
+        nextPharmacyMap[id] = pharmacy.name || pharmacy.storeName || pharmacy.shopName || id;
+      }
+    });
+
+
+    const nextMedicineMap: Record<string, string> = {};
+    medicines.forEach((medicine: any) => {
+      const id = String(medicine?.id || '');
+      if (id && medicineIds.has(id)) {
+        nextMedicineMap[id] = medicine.brandName || medicine.name || medicine.medicineName || medicine.genericName || id;
+      }
+    });
+
+    setUserNameMap(nextUserMap);
+    setPharmacyNameMap(nextPharmacyMap);
+    setMedicineNameMap(nextMedicineMap);
+  };
 
   const fetchOrders = async () => {
     try {
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'customer_get_orders_started',
+        status: 'start',
+        page: 'OrderHistory',
+        route: '/orders',
+        message: 'Customer orders query started.',
+        ids: { customerId: profile?.uid },
+      });
       const data = await api.getOrders({ customerId: profile?.uid });
-      setOrders(data.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'customer_get_orders_success',
+        status: 'success',
+        page: 'OrderHistory',
+        message: 'Customer orders query succeeded.',
+        ids: { customerId: profile?.uid },
+        meta: { resultCount: data.length },
+      });
+      const sorted = data.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setOrders(sorted);
+      await hydrateNames(sorted);
     } catch (error) {
-      console.error('Failed to fetch orders:', error);
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'customer_get_orders_failure',
+        status: 'failure',
+        page: 'OrderHistory',
+        message: 'Customer orders query failed.',
+        ids: { customerId: profile?.uid },
+        error: appLogger.errorSummary(error),
+      });
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'customer_orders_page_loaded',
+      status: 'start',
+      page: 'OrderHistory',
+      route: '/orders',
+      message: 'Customer order history page mounted.',
+    });
     fetchOrders();
     const unsubscribe = api.subscribeToOrders({ customerId: profile?.uid }, (liveOrders: any[]) => {
       setOrders(liveOrders);
       setLoading(false);
+      hydrateNames(liveOrders).catch(() => undefined);
     });
     return () => unsubscribe();
   }, [profile]);
@@ -61,6 +146,32 @@ export default function OrderHistory() {
     if (status === 'pending' || status === 'processing' || status === 'initiated') return 'bg-amber-50 text-amber-700';
     return 'bg-slate-100 text-slate-600';
   };
+
+  const orderItems = (order: any) => (Array.isArray(order?.items) ? order.items : []);
+  const visibleOrderCount = Array.isArray(orders) ? orders.length : 0;
+
+  useEffect(() => {
+    appLogger.log({
+      category: 'ORDER_FLOW',
+      event: 'customer_orders_render_state',
+      status: 'success',
+      page: 'OrderHistory',
+      message: 'Customer orders render state updated.',
+      ids: { customerId: profile?.uid },
+      meta: { visibleOrderCount, loading },
+    });
+    const malformed = orders.filter((order) => !Array.isArray(order?.items) || typeof order?.totalAmount !== 'number');
+    if (malformed.length > 0) {
+      appLogger.log({
+        category: 'SYSTEM_WARNING',
+        event: 'customer_orders_malformed_shape',
+        status: 'warning',
+        page: 'OrderHistory',
+        message: 'Some customer order records are malformed.',
+        meta: { malformedCount: malformed.length },
+      });
+    }
+  }, [visibleOrderCount, loading, profile?.uid]);
 
   return (
     <div className="max-w-4xl mx-auto p-6">
@@ -108,7 +219,7 @@ export default function OrderHistory() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm font-bold text-emerald-600">₹{order.totalAmount.toFixed(2)}</div>
+                  <div className="text-sm font-bold text-emerald-600">₹{Number(order.totalAmount || 0).toFixed(2)}</div>
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{getStatusText(order.status)}</span>
                   <div className={`mt-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full inline-block ${getPaymentBadge(order.paymentStatus || 'pending')}`}>
                     Payment: {(order.paymentStatus || 'pending').replace('_', ' ')}
@@ -118,18 +229,21 @@ export default function OrderHistory() {
 
               <div className="flex items-center justify-between pt-4 border-t border-slate-50">
                 <div className="flex -space-x-2">
-                  {order.items.slice(0, 3).map((item: any, idx: number) => (
+                  {orderItems(order).slice(0, 3).map((item: any, idx: number) => (
                     <div key={idx} className="w-8 h-8 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-slate-600">
-                      {item.medicineId.slice(0, 2).toUpperCase()}
+                      {String(item.brandName || item.name || medicineNameMap[String(item.medicineMasterId || '')] || medicineNameMap[String(item.medicineId || '')] || item.medicineMasterId || item.medicineId || 'NA').slice(0, 2).toUpperCase()}
                     </div>
                   ))}
-                  {order.items.length > 3 && (
+                  {orderItems(order).length > 3 && (
                     <div className="w-8 h-8 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[10px] font-bold text-slate-600">
-                      +{order.items.length - 3}
+                      +{orderItems(order).length - 3}
                     </div>
                   )}
                 </div>
-                <button className="text-emerald-600 text-sm font-bold flex items-center gap-1 hover:gap-2 transition-all">
+                <button
+                  onClick={() => setSelectedOrder(order)}
+                  className="text-emerald-600 text-sm font-bold flex items-center gap-1 hover:gap-2 transition-all"
+                >
                   View Details
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -143,6 +257,16 @@ export default function OrderHistory() {
           ))}
         </div>
       )}
+
+      <OrderDetailsModal
+        isOpen={Boolean(selectedOrder)}
+        order={selectedOrder}
+        onClose={() => setSelectedOrder(null)}
+        title="Order Details"
+        userNameMap={userNameMap}
+        pharmacyNameMap={pharmacyNameMap}
+        medicineNameMap={medicineNameMap}
+      />
     </div>
   );
 }
