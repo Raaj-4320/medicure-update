@@ -173,6 +173,20 @@ export const checkExpectations = (params: {
   }
 };
 
+export const logRouteState = (params: {
+  route: string;
+  state: 'ok' | 'blocked' | 'error';
+  reason?: string;
+  detail?: unknown;
+}): void => {
+  const method = params.state === 'error' ? console.error : params.state === 'blocked' ? console.warn : console.info;
+  console.group(`[ROUTE][${params.route}]`);
+  method('STATE:', params.state.toUpperCase());
+  if (params.reason) method('REASON:', params.reason);
+  if (params.detail !== undefined) console.log('DETAIL:', params.detail);
+  console.groupEnd();
+};
+
 export const validateRequiredFields = (
   payload: Record<string, unknown>,
   required: string[],
