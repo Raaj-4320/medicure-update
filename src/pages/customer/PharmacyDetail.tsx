@@ -119,24 +119,16 @@ const PharmacyDetail: React.FC = () => {
 
       {/* Header Card */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="h-64 relative">
-          <img src={pharmacy.image || undefined} alt={pharmacy.name || 'Profile Incomplete'} className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-          <div className="absolute bottom-6 left-8 text-white">
-            <h1 className="text-3xl font-bold mb-2">{pharmacy.name || 'Profile Incomplete'}</h1>
-            <div className="flex items-center gap-4 text-sm font-medium">
-              <div className="flex items-center gap-1">
-                <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                {pharmacy.rating.toFixed(1)} ({pharmacy.reviewCount} reviews)
-              </div>
-              <div className="flex items-center gap-1">
-                <Clock className="w-4 h-4" />
-                {pharmacy.operatingHours}
-              </div>
-              <div className="flex items-center gap-1">
-                <Truck className="w-4 h-4" />
-                ₹{pharmacy.deliveryFee} Delivery Fee
-              </div>
+        <div className="p-8 bg-slate-50">
+          <h1 className="text-3xl font-bold mb-2 text-slate-900">{pharmacy.name || 'Pharmacy'}</h1>
+          <div className="flex items-center gap-4 text-sm font-medium text-slate-600">
+            <div className="flex items-center gap-1">
+              <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+              {pharmacy.rating.toFixed(1)} ({pharmacy.reviewCount} reviews)
+            </div>
+            <div className="flex items-center gap-1">
+              <Clock className="w-4 h-4" />
+              {pharmacy.operatingHours}
             </div>
           </div>
         </div>
@@ -177,8 +169,12 @@ const PharmacyDetail: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredMeds.map((med) => (
             <div key={med.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex gap-4 hover:border-emerald-200 transition-all">
-              <div className="w-24 h-24 bg-slate-50 rounded-xl overflow-hidden flex-shrink-0">
-                <img src={med.masterData?.image} alt="" className="w-full h-full object-cover" />
+              <div className="w-24 h-24 bg-slate-50 rounded-xl overflow-hidden flex-shrink-0 flex items-center justify-center">
+                {med.masterData?.image ? (
+                  <img src={med.masterData.image} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Info className="w-6 h-6 text-slate-300" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between mb-1">
