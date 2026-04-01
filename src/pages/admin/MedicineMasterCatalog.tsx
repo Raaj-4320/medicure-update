@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle, Loader2, Plus, Search, XCircle } from 'lucide-react';
+import { CheckCircle, Edit2, Loader2, Plus, Search, Trash2, XCircle } from 'lucide-react';
 import { api } from '../../services/api';
 import AddMedicineModal, { AddMedicineValues } from '../../components/medicine/AddMedicineModal';
 import { logUI } from '../../utils/uiLogger';
@@ -78,7 +78,10 @@ const MedicineMasterCatalog: React.FC = () => {
         expected: 'should call API + update UI',
         status: 'working',
       });
-      await api.updateMedicine(id, { status });
+      const updated = await api.updateMedicine(id, { status });
+      if (!updated) {
+        throw new Error('Medicine status update was not persisted.');
+      }
       await loadMedicines();
     } catch (err: any) {
       setError(err?.message || 'Failed to update medicine status');
@@ -89,6 +92,44 @@ const MedicineMasterCatalog: React.FC = () => {
         status: 'not_working',
         reason: err?.message || 'status update failed',
       });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const editMedicine = async (medicine: any) => {
+    const brandName = window.prompt('Medicine name', medicine.name || medicine.brandName || '') || medicine.name || medicine.brandName;
+    const genericName = window.prompt('Generic name', medicine.genericName || '') || medicine.genericName;
+    const category = window.prompt('Category', medicine.category || '') || medicine.category;
+    const priceInput = window.prompt('Price', String(medicine.price ?? ''));
+    const price = priceInput === null || priceInput === '' ? medicine.price : Number(priceInput);
+    setUpdatingId(medicine.id);
+    setError('');
+    try {
+      const updated = await api.updateMedicine(medicine.id, { brandName, genericName, category, price });
+      if (!updated) {
+        throw new Error('Medicine update was not persisted.');
+      }
+      await loadMedicines();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to edit medicine');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const deleteMedicine = async (medicineId: string) => {
+    if (!window.confirm('Delete this medicine from catalog?')) return;
+    setUpdatingId(medicineId);
+    setError('');
+    try {
+      const deleted = await api.deleteMedicine(medicineId);
+      if (!deleted) {
+        throw new Error('Medicine delete was not persisted.');
+      }
+      await loadMedicines();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete medicine');
     } finally {
       setUpdatingId(null);
     }
@@ -158,6 +199,8 @@ const MedicineMasterCatalog: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <button disabled={updatingId === med.id || med.status === 'approved'} onClick={() => updateStatus(med.id, 'approved')} className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"><CheckCircle className="w-4 h-4" /></button>
                       <button disabled={updatingId === med.id || med.status === 'rejected'} onClick={() => updateStatus(med.id, 'rejected')} className="p-2 rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"><XCircle className="w-4 h-4" /></button>
+                      <button disabled={updatingId === med.id} onClick={() => editMedicine(med)} className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"><Edit2 className="w-4 h-4" /></button>
+                      <button disabled={updatingId === med.id} onClick={() => deleteMedicine(med.id)} className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </td>
                 </tr>

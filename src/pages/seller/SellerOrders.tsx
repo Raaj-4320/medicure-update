@@ -211,7 +211,7 @@ export default function SellerOrders() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Items</h4>
                     <div className="space-y-2">
-                      {order.items.map((item: any, idx: number) => (
+                      {(Array.isArray(order.items) ? order.items : []).map((item: any, idx: number) => (
                         <div key={idx} className="flex justify-between text-sm">
                           <span className="text-slate-600">Medicine ID: {item.medicineId} x {item.quantity}</span>
                           <span className="font-bold text-slate-900">₹{(item.price * item.quantity).toFixed(2)}</span>

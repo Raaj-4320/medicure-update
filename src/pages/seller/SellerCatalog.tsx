@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Edit2, Search, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
@@ -10,6 +10,7 @@ const SellerCatalog: React.FC = () => {
   const [inventory, setInventory] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!profile?.uid) return;
@@ -49,15 +50,48 @@ const SellerCatalog: React.FC = () => {
   };
 
   useEffect(() => {
-    logFlow('CATALOG_READ_ONLY', {
-      expected: ['catalog view only'],
-      received: { mode: 'read_only' },
+    logFlow('CATALOG_ACTIONS_ENABLED', {
+      expected: ['catalog edit and delete actions available'],
+      received: { mode: 'live_actions' },
       success: true,
     });
     loadData().catch((e) => setErrorMessage(e?.message || 'Failed to load catalog'));
   }, [profile]);
 
   const filtered = inventory.filter((item: any) => `${item.masterData?.brandName || ''} ${item.masterData?.genericName || ''}`.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const handleEdit = async (item: any) => {
+    const stock = Number(window.prompt('Update stock', String(item.stock)) || item.stock);
+    const price = Number(window.prompt('Update price', String(item.price)) || item.price);
+    try {
+      setActionBusyId(item.id);
+      const updated = await api.updateInventory(item.id, { stock, price });
+      if (!updated) {
+        throw new Error('Inventory update was not persisted.');
+      }
+      await loadData();
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Failed to update product');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Delete this product from your inventory?')) return;
+    try {
+      setActionBusyId(id);
+      const deleted = await api.deleteInventory(id);
+      if (!deleted) {
+        throw new Error('Inventory delete was not persisted.');
+      }
+      await loadData();
+    } catch (e: any) {
+      setErrorMessage(e?.message || 'Failed to delete product');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -84,14 +118,29 @@ const SellerCatalog: React.FC = () => {
             <div className="relative h-40 bg-slate-50 p-4 flex items-center justify-center">
               <img src={item.masterData?.image || undefined} alt={item.masterData?.brandName} className="max-h-full max-w-full object-contain" />
               <div className="absolute top-3 right-3 px-2 py-1 text-[10px] font-bold rounded bg-white/90 text-slate-600">
-                READ ONLY
+                LIVE
               </div>
             </div>
             <div className="p-5 space-y-3">
               <h3 className="font-bold text-slate-900">{item.masterData?.brandName}</h3>
               <p className="text-xs text-slate-500 italic">{item.masterData?.genericName}</p>
               <div className="flex items-center justify-between text-sm"><span>₹{item.price}</span><span>Stock: {item.stock}</span></div>
-              <p className="text-[11px] text-slate-500">Manage listing actions from Inventory page.</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleEdit(item)}
+                  disabled={actionBusyId === item.id}
+                  className="p-2 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleDelete(item.id)}
+                  disabled={actionBusyId === item.id}
+                  className="p-2 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </motion.div>
         ))}
