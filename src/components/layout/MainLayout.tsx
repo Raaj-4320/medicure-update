@@ -93,31 +93,17 @@ const MainLayout: React.FC = () => {
       items.push(
         { label: 'Dashboard', icon: LayoutDashboard, path: '/seller' },
         { label: 'Orders', icon: ClipboardList, path: '/seller/orders' },
-        { label: 'Prescriptions', icon: FileText, path: '/seller/prescriptions' },
         { label: 'Inventory', icon: Package, path: '/seller/inventory' },
         { label: 'Medicine Catalog', icon: Store, path: '/seller/catalog' },
-        { label: 'Returns & Replacements', icon: History, path: '/seller/returns' },
-        { label: 'Payouts', icon: DollarSign, path: '/seller/payouts' },
-        { label: 'Analytics', icon: Activity, path: '/seller/analytics' },
-        { label: 'Store Profile', icon: Building2, path: '/seller/profile' },
-        { label: 'Compliance', icon: ShieldCheck, path: '/seller/compliance' },
-        { label: 'Support', icon: LifeBuoy, path: '/seller/support' },
-        { label: 'Notifications', icon: Bell, path: '/seller/notifications' }
+        { label: 'Store Profile', icon: Building2, path: '/seller/profile' }
       );
     } else if (profile.role === 'admin') {
       items.push(
         { label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
-        { label: 'User Management', icon: Users, path: '/admin/users' },
+        { label: 'Users', icon: Users, path: '/admin/users' },
         { label: 'Verifications', icon: ShieldCheck, path: '/admin/verifications' },
         { label: 'Medicine Catalog', icon: Package, path: '/admin/catalog' },
-        { label: 'Supply Chain', icon: ClipboardList, path: '/admin/analytics' },
-        { label: 'Logistics', icon: Truck, path: '/admin/logistics' },
-        { label: 'Manufacturers', icon: Factory, path: '/admin/manufacturers' },
-        { label: 'Risk & Compliance', icon: ShieldCheck, path: '/admin/compliance' },
-        { label: 'Medicine Safety', icon: ShieldAlert, path: '/admin/safety' },
-        { label: 'Financials', icon: DollarSign, path: '/admin/financials' },
-        { label: 'Advanced Logistics', icon: Navigation, path: '/admin/advanced-logistics' },
-        { label: 'Prescriptions', icon: FileText, path: '/admin/prescriptions' }
+        { label: 'Logistics', icon: Truck, path: '/admin/logistics' }
       );
     } else if (profile.role === 'delivery') {
       items.push(
