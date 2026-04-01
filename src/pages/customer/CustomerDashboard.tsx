@@ -20,10 +20,16 @@ import { api } from '../../services/api';
 
 const CustomerDashboard: React.FC = () => {
   const { profile } = useAuth();
-  const { location } = useLocation();
+  const { location, setLocation } = useLocation();
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [nearbyPharmacies, setNearbyPharmacies] = useState<Pharmacy[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const quickLocations = [
+    { country: 'India', state: 'Maharashtra', city: 'Mumbai', area: 'Andheri', locality: 'West', pincode: '400053', landmark: 'Metro Station' },
+    { country: 'India', state: 'Maharashtra', city: 'Pune', area: 'Kothrud', locality: 'Depot', pincode: '411038', landmark: 'Bus Depot' },
+    { country: 'India', state: 'Karnataka', city: 'Bengaluru', area: 'Indiranagar', locality: '100ft Road', pincode: '560038', landmark: 'Metro Gate' },
+  ];
 
   useEffect(() => {
     const fetchData = async () => {
@@ -99,17 +105,22 @@ const CustomerDashboard: React.FC = () => {
           {/* Nearby Pharmacies */}
           <div className="space-y-6 pt-4">
             <h2 className="text-xl font-bold text-slate-900">Pharmacies Near You</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {nearbyPharmacies.map(pharmacy => (
-                <Link key={pharmacy.id} to={`/pharmacy/${pharmacy.id}`} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-200 transition-all flex items-center gap-4">
-                  <img src={pharmacy.image || undefined} alt="" className="w-16 h-16 rounded-xl object-cover" />
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">{pharmacy.name || 'Profile Incomplete'}</h4>
-                    <p className="text-xs text-slate-500">{pharmacy.address.area}</p>
-                  </div>
-                </Link>
-              ))}
-            </div>
+            {nearbyPharmacies.length === 0 ? (
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 text-sm text-slate-600">
+                No pharmacies available yet. Try opening Discover Pharmacies.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {nearbyPharmacies.map(pharmacy => (
+                  <Link key={pharmacy.id} to={`/pharmacy/${pharmacy.id}`} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-200 transition-all flex items-center gap-4">
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">{pharmacy.name || 'Pharmacy'}</h4>
+                      <p className="text-xs text-slate-500">{pharmacy.address?.area || pharmacy.address?.city || 'Local area'}</p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -127,15 +138,7 @@ const CustomerDashboard: React.FC = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() =>
-                    logUI('ACTION', {
-                      component: 'CustomerDashboard',
-                      action: 'Change Location',
-                      expected: 'should open location selector',
-                      status: 'partial',
-                      reason: 'Location selector route not implemented yet',
-                    })
-                  }
+                  onClick={() => setShowLocationPicker(true)}
                   className="w-full py-2 text-sm font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors"
                 >
                   Change Location
@@ -155,6 +158,28 @@ const CustomerDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+      {showLocationPicker && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-md space-y-3">
+            <h3 className="font-bold text-slate-900">Select Location</h3>
+            {quickLocations.map((loc) => (
+              <button
+                key={`${loc.city}-${loc.area}`}
+                onClick={() => {
+                  setLocation(loc);
+                  setShowLocationPicker(false);
+                  logUI('ACTION', { component: 'CustomerDashboard', action: `Location set ${loc.city}`, success: true });
+                }}
+                className="w-full text-left p-3 rounded-lg border border-slate-200 hover:border-emerald-300"
+              >
+                <p className="font-semibold text-slate-900">{loc.area}, {loc.city}</p>
+                <p className="text-xs text-slate-500">{loc.pincode}</p>
+              </button>
+            ))}
+            <button onClick={() => setShowLocationPicker(false)} className="w-full py-2 rounded-lg bg-slate-100 text-slate-700 font-semibold">Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
