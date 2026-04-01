@@ -7,12 +7,13 @@ import {
   CheckCircle2, 
   ChevronRight, 
   Loader2, 
-  AlertCircle
+  AlertCircle,
+  Plus
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { api } from '../../services/api';
 import { motion, AnimatePresence } from 'motion/react';
-import { logUI } from '../../utils/uiLogger';
+import { appLogger } from '../../utils/observability';
 import type { PaymentMethod, PaymentStatus } from '../../types';
 
 export default function CheckoutPage() {
@@ -21,7 +22,7 @@ export default function CheckoutPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [selectedAddress, setSelectedAddress] = useState(profile?.addresses?.[0]?.id || '');
+  const [selectedAddress, setSelectedAddress] = useState(profile?.addresses?.[0]?.id ? String(profile.addresses[0].id) : '');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('upi');
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('initiated');
   const [transactionRef, setTransactionRef] = useState('');
@@ -30,17 +31,78 @@ export default function CheckoutPage() {
   const [prescriptionUploaded, setPrescriptionUploaded] = useState(false);
   const [cartItems, setCartItems] = useState<any[]>([]);
   const [orderId, setOrderId] = useState<string | null>(null);
+  const [newAddress, setNewAddress] = useState({ type: 'Home', addressLine: '', area: '', city: '' });
+  const [addedAddresses, setAddedAddresses] = useState<any[]>([]);
+  const [showAddAddress, setShowAddAddress] = useState(false);
+  const profileAddresses = Array.isArray(profile?.addresses)
+    ? profile.addresses.map((address: any) => ({
+        ...address,
+        id: String(address?.id || ''),
+      }))
+    : [];
+  const availableAddresses = [...addedAddresses, ...profileAddresses];
 
   useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'checkout_page_entered',
+      status: 'start',
+      page: 'CheckoutPage',
+      route: '/checkout',
+      scope: 'useEffect',
+      message: 'Checkout page mounted.',
+    });
     // In a real app, we'd fetch cart from API
     // For now, we'll simulate fetching it
     const savedCart = localStorage.getItem('cart');
-    if (savedCart) {
-      setCartItems(JSON.parse(savedCart));
-    } else {
+    if (!savedCart) {
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_cart_missing',
+        status: 'warning',
+        page: 'CheckoutPage',
+        message: 'No cart found, redirecting to cart.',
+      });
+      navigate('/cart');
+      return;
+    }
+    try {
+      const parsed = JSON.parse(savedCart);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('Cart is empty.');
+      }
+      setCartItems(parsed);
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_cart_loaded',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Cart loaded from storage.',
+        meta: { cartCount: parsed.length },
+      });
+    } catch (cartError) {
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_cart_parse_failure',
+        status: 'warning',
+        page: 'CheckoutPage',
+        message: 'Cart data was invalid, redirecting to cart.',
+        error: appLogger.errorSummary(cartError),
+      });
       navigate('/cart');
     }
   }, [navigate]);
+
+  useEffect(() => {
+    if (availableAddresses.length === 0) {
+      setSelectedAddress('');
+      return;
+    }
+    const hasSelectedAddress = availableAddresses.some((addr: any) => addr.id === selectedAddress);
+    if (!hasSelectedAddress) {
+      setSelectedAddress(String(availableAddresses[0].id));
+    }
+  }, [availableAddresses, selectedAddress]);
 
   const subtotal = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   const deliveryFee = 40;
@@ -60,21 +122,114 @@ export default function CheckoutPage() {
     setPaymentStatus('initiated');
   };
 
+  const handleContinueToPayment = () => {
+    setError('');
+    setStep((prevStep) => (prevStep < 2 ? 2 : prevStep));
+    appLogger.log({
+      category: 'ORDER_FLOW',
+      event: 'checkout_step_transition_success',
+      status: 'success',
+      page: 'CheckoutPage',
+      message: 'Checkout moved from delivery step to payment step.',
+      meta: { fromStep: 1, toStep: 2 },
+    });
+  };
+
+
+  const handleAddAddress = () => {
+    const addressLine = newAddress.addressLine.trim();
+    const area = newAddress.area.trim();
+    const city = newAddress.city.trim() || 'Ahmedabad';
+    if (!addressLine || !area) {
+      return;
+    }
+    const createdAddress = {
+      id: `added-${Date.now()}`,
+      type: newAddress.type || 'Home',
+      addressLine,
+      area,
+      city,
+    };
+    setAddedAddresses((prev) => [createdAddress, ...prev]);
+    setSelectedAddress(createdAddress.id);
+    setShowAddAddress(false);
+    setNewAddress({ type: 'Home', addressLine: '', area: '', city: '' });
+  };
+
   const handlePlaceOrder = async () => {
     let successfulPaymentRecordId = '';
     setLoading(true);
     resetPaymentUi();
-    logUI('ORDER_SUBMIT', { context: 'Checkout submit clicked', success: true });
+    appLogger.log({
+      category: 'UI_ACTION',
+      event: 'checkout_place_order_clicked',
+      status: 'start',
+      page: 'CheckoutPage',
+      scope: 'handlePlaceOrder',
+      message: 'Place order clicked.',
+    });
     try {
-      const checkoutPharmacyId = cartItems[0]?.pharmacyId || 'pharmacy-1';
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_validation_started',
+        status: 'start',
+        page: 'CheckoutPage',
+        message: 'Checkout validations started.',
+      });
+      if (!profile?.uid) {
+        appLogger.log({
+          category: 'AUTH_PROFILE_PHARMACY',
+          event: 'checkout_missing_profile',
+          status: 'failure',
+          page: 'CheckoutPage',
+          message: 'Cannot place order without authenticated profile uid.',
+        });
+        throw new Error('You must be logged in to place an order.');
+      }
+      const checkoutPharmacyId = cartItems[0]?.pharmacyId;
+      if (!checkoutPharmacyId) {
+        throw new Error('Cart is missing pharmacy information. Please re-add items.');
+      }
       const pharmacy = (await api.getPharmacies({ id: checkoutPharmacyId }))?.[0];
+      const normalizedAddresses = (availableAddresses || []).map((addr: any) => ({
+        ...addr,
+        id: String(addr?.id ?? ''),
+      }));
+      const selectedAddressData =
+        normalizedAddresses.find((addr: any) => addr.id === String(selectedAddress || '')) ||
+        normalizedAddresses[0] ||
+        {
+          id: 'fallback-address',
+          type: 'Home',
+          addressLine: profile?.name ? `${profile.name}'s address` : 'Default delivery address',
+          area: 'Primary Area',
+          city: 'Ahmedabad',
+        };
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_validation_passed',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Checkout validations passed.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { selectedAddress: selectedAddressData.id, cartCount: cartItems.length, totalAmount: total },
+      });
       // 1. Process payment in demo-safe simulated flow
       setPaymentStatus('processing');
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_payment_started',
+        status: 'start',
+        page: 'CheckoutPage',
+        message: 'Payment processing started.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { method: paymentMethod, totalAmount: total, cartCount: cartItems.length },
+      });
       const paymentResponse = await api.processPayment({
         orderId: `temp-${Date.now()}`,
         amount: total,
         method: paymentMethod,
-        customerId: profile?.uid || 'customer-1',
+        customerId: profile.uid,
         pharmacyId: checkoutPharmacyId,
         sellerId: pharmacy?.ownerId || pharmacy?.sellerId || '',
         metadata: {
@@ -86,6 +241,15 @@ export default function CheckoutPage() {
       setPaymentStatus(paymentResponse.status);
       setTransactionRef(paymentResponse.transactionId || '');
       setPaymentRecordId(paymentResponse.paymentId || '');
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_payment_result',
+        status: paymentResponse.success ? 'success' : 'failure',
+        page: 'CheckoutPage',
+        message: paymentResponse.success ? 'Payment processed successfully.' : 'Payment failed before order creation.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { paymentId: paymentResponse.paymentId, paymentStatus: paymentResponse.status },
+      });
 
       if (!paymentResponse.success) {
         setPaymentFailureReason(paymentResponse.failureReason || 'Payment failed. Please retry.');
@@ -96,8 +260,8 @@ export default function CheckoutPage() {
       let prescriptionId: string | null = null;
       if (prescriptionUploaded) {
         const createdPrescription = await api.createPrescription({
-          userId: profile?.uid || 'customer-1',
-          pharmacyId: cartItems[0]?.pharmacyId || 'pharmacy-1',
+          userId: profile.uid,
+          pharmacyId: checkoutPharmacyId,
           status: 'pending',
           imageUrl: 'https://example.com/rx.jpg',
         });
@@ -105,8 +269,9 @@ export default function CheckoutPage() {
       }
 
       const orderData = {
-        customerId: profile?.uid || 'customer-1',
+        customerId: profile.uid,
         pharmacyId: checkoutPharmacyId,
+        sellerId: pharmacy?.ownerId || pharmacy?.sellerId || '',
         medicineMasterId: cartItems[0]?.medicineMasterId || cartItems[0]?.medicineId || cartItems[0]?.id || '',
         quantity: Number(cartItems[0]?.quantity || 1),
         price: Number(cartItems[0]?.price || 0),
@@ -117,7 +282,8 @@ export default function CheckoutPage() {
           price: item.price
         })),
         totalAmount: total,
-        addressId: selectedAddress,
+        addressId: selectedAddressData.id,
+        deliveryAddress: selectedAddressData,
         paymentMethod,
         paymentStatus: paymentResponse.status,
         paymentId: paymentResponse.paymentId,
@@ -127,16 +293,68 @@ export default function CheckoutPage() {
         prescriptionUrl: prescriptionUploaded ? 'https://example.com/rx.jpg' : null
       };
       successfulPaymentRecordId = paymentResponse.paymentId;
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_order_payload_constructed',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Order payload prepared.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { itemCount: orderData.items.length, totalAmount: orderData.totalAmount, paymentStatus: orderData.paymentStatus },
+      });
 
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_create_order_started',
+        status: 'start',
+        page: 'CheckoutPage',
+        message: 'Order creation request started.',
+      });
       const order = await api.createOrder(orderData);
+      if (!order?.id) {
+        throw new Error('Order creation did not return a valid order id.');
+      }
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_order_write_success',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Order write succeeded.',
+        ids: { orderId: order.id, customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+      });
       if (paymentResponse.paymentId) {
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'checkout_payment_link_patch_started',
+          status: 'start',
+          page: 'CheckoutPage',
+          message: 'Linking payment with persisted order.',
+          ids: { orderId: order.id },
+          meta: { paymentId: paymentResponse.paymentId },
+        });
         await api.updatePayment(paymentResponse.paymentId, {
           orderId: order.id,
           notes: `Linked to order ${order.id}`,
         });
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'checkout_payment_link_patch_success',
+          status: 'success',
+          page: 'CheckoutPage',
+          message: 'Payment linked with order.',
+          ids: { orderId: order.id },
+          meta: { paymentId: paymentResponse.paymentId },
+        });
       }
       setOrderId(order.id);
-      logUI('ORDER_SUBMIT', { context: `Order ${order.id} created`, success: true });
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_success_ui_shown',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Checkout success state rendered.',
+        ids: { orderId: order.id },
+      });
 
       // 3. Clear Cart
       localStorage.removeItem('cart');
@@ -144,6 +362,15 @@ export default function CheckoutPage() {
       setStep(3); // Success step
     } catch (err: any) {
       if (successfulPaymentRecordId) {
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'checkout_payment_link_patch_failure',
+          status: 'warning',
+          page: 'CheckoutPage',
+          message: 'Order failed after payment success; payment flagged for manual review.',
+          meta: { paymentId: successfulPaymentRecordId },
+          error: appLogger.errorSummary(err),
+        });
         await api.updatePayment(successfulPaymentRecordId, {
           paymentStatus: 'pending',
           failureReason: 'Order creation failed after payment success. Needs manual review.',
@@ -151,7 +378,23 @@ export default function CheckoutPage() {
         });
       }
       setError(err.message || 'Failed to place order');
-      logUI('ORDER_SUBMIT', { context: 'Checkout submit failed', success: false, reason: err?.message || 'Unknown error' });
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_order_write_failure',
+        status: 'failure',
+        page: 'CheckoutPage',
+        message: 'Checkout flow failed.',
+        ids: { customerId: profile?.uid, pharmacyId: cartItems[0]?.pharmacyId },
+        meta: { cartCount: cartItems.length, totalAmount: total },
+        error: appLogger.errorSummary(err),
+      });
+      appLogger.log({
+        category: 'UI_ACTION',
+        event: 'checkout_failure_ui_shown',
+        status: 'warning',
+        page: 'CheckoutPage',
+        message: 'Checkout error message shown to user.',
+      });
     } finally {
       setLoading(false);
     }
@@ -178,9 +421,55 @@ export default function CheckoutPage() {
 
               <div className="space-y-6">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-3">Select Delivery Address</label>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="block text-sm font-medium text-slate-700">Select Delivery Address</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddAddress((prev) => !prev)}
+                      className="text-emerald-700 text-xs font-bold flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Address
+                    </button>
+                  </div>
+
+                  {showAddAddress && (
+                    <div className="mb-3 p-3 rounded-xl border border-slate-200 bg-slate-50 grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <input
+                        value={newAddress.type}
+                        onChange={(e) => setNewAddress((prev) => ({ ...prev, type: e.target.value }))}
+                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                        placeholder="Type (Home/Work)"
+                      />
+                      <input
+                        value={newAddress.city}
+                        onChange={(e) => setNewAddress((prev) => ({ ...prev, city: e.target.value }))}
+                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                        placeholder="City"
+                      />
+                      <input
+                        value={newAddress.addressLine}
+                        onChange={(e) => setNewAddress((prev) => ({ ...prev, addressLine: e.target.value }))}
+                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm md:col-span-2"
+                        placeholder="Address line"
+                      />
+                      <input
+                        value={newAddress.area}
+                        onChange={(e) => setNewAddress((prev) => ({ ...prev, area: e.target.value }))}
+                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                        placeholder="Area"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddAddress}
+                        className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold"
+                      >
+                        Save Address
+                      </button>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 gap-3">
-                    {profile?.addresses?.map((addr: any) => (
+                    {availableAddresses.map((addr: any) => (
                       <label 
                         key={addr.id}
                         className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
@@ -192,7 +481,7 @@ export default function CheckoutPage() {
                           name="address" 
                           className="mt-1 text-emerald-600 focus:ring-emerald-500"
                           checked={selectedAddress === addr.id}
-                          onChange={() => setSelectedAddress(addr.id)}
+                          onChange={() => setSelectedAddress(String(addr.id))}
                         />
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
@@ -228,8 +517,7 @@ export default function CheckoutPage() {
 
                 {step === 1 && (
                   <button 
-                    onClick={() => setStep(2)}
-                    disabled={!selectedAddress || !prescriptionUploaded}
+                    onClick={handleContinueToPayment}
                     className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all disabled:opacity-50"
                   >
                     Continue to Payment
