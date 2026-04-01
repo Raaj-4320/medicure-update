@@ -62,6 +62,8 @@ export default function OrderHistory() {
     return 'bg-slate-100 text-slate-600';
   };
 
+  const orderItems = (order: any) => (Array.isArray(order?.items) ? order.items : []);
+
   return (
     <div className="max-w-4xl mx-auto p-6">
       <div className="flex items-center justify-between mb-8">
@@ -118,14 +120,14 @@ export default function OrderHistory() {
 
               <div className="flex items-center justify-between pt-4 border-t border-slate-50">
                 <div className="flex -space-x-2">
-                  {order.items.slice(0, 3).map((item: any, idx: number) => (
+                  {orderItems(order).slice(0, 3).map((item: any, idx: number) => (
                     <div key={idx} className="w-8 h-8 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-slate-600">
-                      {item.medicineId.slice(0, 2).toUpperCase()}
+                      {String(item.medicineId || 'NA').slice(0, 2).toUpperCase()}
                     </div>
                   ))}
-                  {order.items.length > 3 && (
+                  {orderItems(order).length > 3 && (
                     <div className="w-8 h-8 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[10px] font-bold text-slate-600">
-                      +{order.items.length - 3}
+                      +{orderItems(order).length - 3}
                     </div>
                   )}
                 </div>

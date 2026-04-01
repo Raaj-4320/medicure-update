@@ -66,15 +66,25 @@ export default function CheckoutPage() {
     resetPaymentUi();
     logUI('ORDER_SUBMIT', { context: 'Checkout submit clicked', success: true });
     try {
-      const checkoutPharmacyId = cartItems[0]?.pharmacyId || 'pharmacy-1';
+      if (!profile?.uid) {
+        throw new Error('You must be logged in to place an order.');
+      }
+      const checkoutPharmacyId = cartItems[0]?.pharmacyId;
+      if (!checkoutPharmacyId) {
+        throw new Error('Cart is missing pharmacy information. Please re-add items.');
+      }
       const pharmacy = (await api.getPharmacies({ id: checkoutPharmacyId }))?.[0];
+      const selectedAddressData = profile?.addresses?.find((addr: any) => addr.id === selectedAddress) || null;
+      if (!selectedAddressData) {
+        throw new Error('Please select a valid delivery address.');
+      }
       // 1. Process payment in demo-safe simulated flow
       setPaymentStatus('processing');
       const paymentResponse = await api.processPayment({
         orderId: `temp-${Date.now()}`,
         amount: total,
         method: paymentMethod,
-        customerId: profile?.uid || 'customer-1',
+        customerId: profile.uid,
         pharmacyId: checkoutPharmacyId,
         sellerId: pharmacy?.ownerId || pharmacy?.sellerId || '',
         metadata: {
@@ -96,8 +106,8 @@ export default function CheckoutPage() {
       let prescriptionId: string | null = null;
       if (prescriptionUploaded) {
         const createdPrescription = await api.createPrescription({
-          userId: profile?.uid || 'customer-1',
-          pharmacyId: cartItems[0]?.pharmacyId || 'pharmacy-1',
+          userId: profile.uid,
+          pharmacyId: checkoutPharmacyId,
           status: 'pending',
           imageUrl: 'https://example.com/rx.jpg',
         });
@@ -105,8 +115,9 @@ export default function CheckoutPage() {
       }
 
       const orderData = {
-        customerId: profile?.uid || 'customer-1',
+        customerId: profile.uid,
         pharmacyId: checkoutPharmacyId,
+        sellerId: pharmacy?.ownerId || pharmacy?.sellerId || '',
         medicineMasterId: cartItems[0]?.medicineMasterId || cartItems[0]?.medicineId || cartItems[0]?.id || '',
         quantity: Number(cartItems[0]?.quantity || 1),
         price: Number(cartItems[0]?.price || 0),
@@ -118,6 +129,7 @@ export default function CheckoutPage() {
         })),
         totalAmount: total,
         addressId: selectedAddress,
+        deliveryAddress: selectedAddressData,
         paymentMethod,
         paymentStatus: paymentResponse.status,
         paymentId: paymentResponse.paymentId,
@@ -129,6 +141,9 @@ export default function CheckoutPage() {
       successfulPaymentRecordId = paymentResponse.paymentId;
 
       const order = await api.createOrder(orderData);
+      if (!order?.id) {
+        throw new Error('Order creation did not return a valid order id.');
+      }
       if (paymentResponse.paymentId) {
         await api.updatePayment(paymentResponse.paymentId, {
           orderId: order.id,

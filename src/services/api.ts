@@ -206,14 +206,17 @@ function normalizeInventory(id: string, data: DocumentData): SellerMedicine {
 
 function normalizeOrder(id: string, data: DocumentData): Order {
   const source = toDictionary(data);
+  const deliveryAddress = toDictionary(source.deliveryAddress);
+  const pharmacyId = asString(source.pharmacyId, asString(deliveryAddress.pharmacyId));
+  const customerId = asString(source.customerId, asString(source.userId));
   return {
     id,
     traceId: asString(source.traceId),
-    customerId: asString(source.customerId),
-    pharmacyId: asString(source.pharmacyId),
+    customerId,
+    pharmacyId,
     status: (asString(source.status, 'pending') as Order['status']) ?? 'pending',
     totalAmount: asNumber(source.totalAmount),
-    deliveryAddress: toDictionary(source.deliveryAddress) as Order['deliveryAddress'],
+    deliveryAddress: deliveryAddress as Order['deliveryAddress'],
     orderType: (asString(source.orderType, 'delivery') as Order['orderType']) ?? 'delivery',
     prescriptionId: asString(source.prescriptionId),
     createdAt: asString(source.createdAt, nowIso()),
@@ -410,7 +413,7 @@ async function listCollection<T>(
     return rows;
   } catch (error) {
     handleFirestoreError(error, `listCollection:${collectionName}`);
-    return [];
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -420,7 +423,7 @@ async function createDoc<T extends Dictionary>(collectionName: string, payload: 
     return ref.id;
   } catch (error) {
     handleFirestoreError(error, `createDoc:${collectionName}`);
-    return '';
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -748,6 +751,10 @@ async function updateMedicine(id: string, patch: Dictionary): Promise<boolean> {
   return patchDoc('medicine_master', id, { ...patch, updatedAt: nowIso() });
 }
 
+async function deleteMedicine(id: string): Promise<boolean> {
+  return removeDoc('medicine_master', id);
+}
+
 async function getInventory(filters: FilterOptions = {}): Promise<SellerMedicine[]> {
   const inventory = await listCollection('inventory', normalizeInventory, filters);
   const validInventory = inventory.filter((item) => {
@@ -814,7 +821,14 @@ async function createInventoryEntry(payload: Dictionary): Promise<SellerMedicine
 }
 
 async function createOrder(payload: Dictionary): Promise<Order> {
+  const validation = validateRequiredFields(payload, ['customerId', 'pharmacyId', 'items', 'totalAmount']);
+  if (!validation.ok) {
+    throw new Error(`Order payload missing required fields: ${validation.missing.join(', ')}`);
+  }
   const items = Array.isArray(payload.items) ? payload.items : [];
+  if (items.length === 0) {
+    throw new Error('Order must contain at least one item.');
+  }
   const firstItem = toDictionary(items[0]);
   const orderPayload: Dictionary = {
     ...payload,
@@ -839,26 +853,43 @@ async function createOrder(payload: Dictionary): Promise<Order> {
   const id = await createDoc('orders', orderPayload);
   const orderTraceId = asString(orderPayload.traceId);
   logTraceFlow('CREATE_ORDER', orderTraceId, { stage: 'WRITE_ORDER', detail: { orderId: id || null } });
-  await createDoc('notifications', {
-    traceId: orderTraceId,
-    userId: asString(orderPayload.pharmacyId),
-    orderId: id,
-    title: 'New Order Received',
-    message: `New order received (${id})`,
-    type: 'order',
-    isRead: false,
-    createdAt: nowIso(),
-  });
+  try {
+    await createDoc('notifications', {
+      traceId: orderTraceId,
+      userId: asString(orderPayload.pharmacyId),
+      orderId: id,
+      title: 'New Order Received',
+      message: `New order received (${id})`,
+      type: 'order',
+      isRead: false,
+      createdAt: nowIso(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, 'createOrder:notification');
+  }
   logFlow('CREATE_ORDER', {
     expected: ['customerId', 'pharmacyId', 'totalAmount'],
     received: { id, customerId: orderPayload.customerId, pharmacyId: orderPayload.pharmacyId, totalAmount: orderPayload.totalAmount },
     success: Boolean(id),
   });
-  return normalizeOrder(id || `order-${Date.now()}`, orderPayload);
+  return normalizeOrder(id, orderPayload);
 }
 
 async function getOrders(filters: FilterOptions = {}): Promise<Order[]> {
-  const orders = await listCollection('orders', normalizeOrder, filters);
+  const hasCompatibilityFilter = filters.pharmacyId !== undefined || filters.customerId !== undefined;
+  let orders = await listCollection('orders', normalizeOrder, hasCompatibilityFilter ? {} : filters);
+  if (filters.pharmacyId !== undefined) {
+    const target = String(filters.pharmacyId);
+    orders = orders.filter((order) => order.pharmacyId === target || asString((order.deliveryAddress as Dictionary)?.pharmacyId) === target);
+  }
+  if (filters.customerId !== undefined) {
+    const target = String(filters.customerId);
+    orders = orders.filter((order) => order.customerId === target);
+  }
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || key === 'pharmacyId' || key === 'customerId') continue;
+    orders = orders.filter((order) => (order as unknown as Dictionary)[key] === value);
+  }
   return [...orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -1218,10 +1249,13 @@ async function processPayment(payload: Dictionary): Promise<PaymentResponse> {
     { merge: true },
   );
 
-  await patchDoc('payments', paymentId, {
+  const processingPatched = await patchDoc('payments', paymentId, {
     paymentStatus: 'processing',
     updatedAt: nowIso(),
   });
+  if (!processingPatched) {
+    throw new Error('Unable to transition payment to processing state.');
+  }
   await sleep(1200);
 
   const updatePayload: Dictionary = {
@@ -1232,7 +1266,10 @@ async function processPayment(payload: Dictionary): Promise<PaymentResponse> {
   if (nextStatus === 'successful') {
     updatePayload.paidAt = nowIso();
   }
-  await patchDoc('payments', paymentId, updatePayload);
+  const finalPatched = await patchDoc('payments', paymentId, updatePayload);
+  if (!finalPatched) {
+    throw new Error('Unable to finalize payment state.');
+  }
 
   return {
     success: nextStatus === 'successful',
@@ -1285,6 +1322,7 @@ const concreteApi = {
   getMedicines,
   createMedicine,
   updateMedicine,
+  deleteMedicine,
   getInventory,
   createInventoryEntry,
   updateInventory,
@@ -1359,8 +1397,7 @@ export const api = new Proxy(concreteApi as ApiShape, {
             success: false,
             error,
           });
-          const fallback = getFallbackByName(String(prop));
-          return fallback;
+          throw error instanceof Error ? error : new Error(String(error));
         }
       };
     }

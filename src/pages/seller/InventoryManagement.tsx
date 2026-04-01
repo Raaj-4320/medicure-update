@@ -138,7 +138,10 @@ const InventoryManagement: React.FC = () => {
     const price = Number(window.prompt('Update price', String(item.price)) || item.price);
     try {
       logUI('EDIT_INVENTORY', { context: `Inventory ${item.id}`, success: true });
-      await api.updateInventory(item.id, { stock, price });
+      const updated = await api.updateInventory(item.id, { stock, price });
+      if (!updated) {
+        throw new Error('Inventory update was not persisted.');
+      }
       await fetchInventory();
     } catch (error) {
       setErrorMessage('Failed to update inventory item');
@@ -150,7 +153,10 @@ const InventoryManagement: React.FC = () => {
     if (!window.confirm('Delete this inventory item?')) return;
     try {
       logUI('DELETE_INVENTORY', { context: `Inventory ${id}`, success: true });
-      await api.deleteInventory(id);
+      const deleted = await api.deleteInventory(id);
+      if (!deleted) {
+        throw new Error('Inventory delete was not persisted.');
+      }
       await fetchInventory();
     } catch (error) {
       setErrorMessage('Failed to delete inventory item');
