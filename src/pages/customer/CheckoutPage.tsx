@@ -12,7 +12,7 @@ import {
 import { useAuth } from '../../AuthContext';
 import { api } from '../../services/api';
 import { motion, AnimatePresence } from 'motion/react';
-import { logUI } from '../../utils/uiLogger';
+import { appLogger } from '../../utils/observability';
 import type { PaymentMethod, PaymentStatus } from '../../types';
 
 export default function CheckoutPage() {
@@ -32,15 +32,46 @@ export default function CheckoutPage() {
   const [orderId, setOrderId] = useState<string | null>(null);
 
   useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'checkout_page_entered',
+      status: 'start',
+      page: 'CheckoutPage',
+      route: '/checkout',
+      scope: 'useEffect',
+      message: 'Checkout page mounted.',
+    });
     // In a real app, we'd fetch cart from API
     // For now, we'll simulate fetching it
     const savedCart = localStorage.getItem('cart');
     if (savedCart) {
-      setCartItems(JSON.parse(savedCart));
+      const parsed = JSON.parse(savedCart);
+      setCartItems(parsed);
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_cart_loaded',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Cart loaded from storage.',
+        meta: { cartCount: Array.isArray(parsed) ? parsed.length : 0 },
+      });
     } else {
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_cart_missing',
+        status: 'warning',
+        page: 'CheckoutPage',
+        message: 'No cart found, redirecting to cart.',
+      });
       navigate('/cart');
     }
   }, [navigate]);
+
+  useEffect(() => {
+    if (!selectedAddress && profile?.addresses?.[0]?.id) {
+      setSelectedAddress(profile.addresses[0].id);
+    }
+  }, [profile?.addresses, selectedAddress]);
 
   const subtotal = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   const deliveryFee = 40;
@@ -64,17 +95,66 @@ export default function CheckoutPage() {
     let successfulPaymentRecordId = '';
     setLoading(true);
     resetPaymentUi();
-    logUI('ORDER_SUBMIT', { context: 'Checkout submit clicked', success: true });
+    appLogger.log({
+      category: 'UI_ACTION',
+      event: 'checkout_place_order_clicked',
+      status: 'start',
+      page: 'CheckoutPage',
+      scope: 'handlePlaceOrder',
+      message: 'Place order clicked.',
+    });
     try {
-      const checkoutPharmacyId = cartItems[0]?.pharmacyId || 'pharmacy-1';
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_validation_started',
+        status: 'start',
+        page: 'CheckoutPage',
+        message: 'Checkout validations started.',
+      });
+      if (!profile?.uid) {
+        appLogger.log({
+          category: 'AUTH_PROFILE_PHARMACY',
+          event: 'checkout_missing_profile',
+          status: 'failure',
+          page: 'CheckoutPage',
+          message: 'Cannot place order without authenticated profile uid.',
+        });
+        throw new Error('You must be logged in to place an order.');
+      }
+      const checkoutPharmacyId = cartItems[0]?.pharmacyId;
+      if (!checkoutPharmacyId) {
+        throw new Error('Cart is missing pharmacy information. Please re-add items.');
+      }
       const pharmacy = (await api.getPharmacies({ id: checkoutPharmacyId }))?.[0];
+      const selectedAddressData = profile?.addresses?.find((addr: any) => addr.id === selectedAddress) || null;
+      if (!selectedAddressData) {
+        throw new Error('Please select a valid delivery address.');
+      }
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_validation_passed',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Checkout validations passed.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { selectedAddress: selectedAddressData.id, cartCount: cartItems.length, totalAmount: total },
+      });
       // 1. Process payment in demo-safe simulated flow
       setPaymentStatus('processing');
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_payment_started',
+        status: 'start',
+        page: 'CheckoutPage',
+        message: 'Payment processing started.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { method: paymentMethod, totalAmount: total, cartCount: cartItems.length },
+      });
       const paymentResponse = await api.processPayment({
         orderId: `temp-${Date.now()}`,
         amount: total,
         method: paymentMethod,
-        customerId: profile?.uid || 'customer-1',
+        customerId: profile.uid,
         pharmacyId: checkoutPharmacyId,
         sellerId: pharmacy?.ownerId || pharmacy?.sellerId || '',
         metadata: {
@@ -86,6 +166,15 @@ export default function CheckoutPage() {
       setPaymentStatus(paymentResponse.status);
       setTransactionRef(paymentResponse.transactionId || '');
       setPaymentRecordId(paymentResponse.paymentId || '');
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_payment_result',
+        status: paymentResponse.success ? 'success' : 'failure',
+        page: 'CheckoutPage',
+        message: paymentResponse.success ? 'Payment processed successfully.' : 'Payment failed before order creation.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { paymentId: paymentResponse.paymentId, paymentStatus: paymentResponse.status },
+      });
 
       if (!paymentResponse.success) {
         setPaymentFailureReason(paymentResponse.failureReason || 'Payment failed. Please retry.');
@@ -96,8 +185,8 @@ export default function CheckoutPage() {
       let prescriptionId: string | null = null;
       if (prescriptionUploaded) {
         const createdPrescription = await api.createPrescription({
-          userId: profile?.uid || 'customer-1',
-          pharmacyId: cartItems[0]?.pharmacyId || 'pharmacy-1',
+          userId: profile.uid,
+          pharmacyId: checkoutPharmacyId,
           status: 'pending',
           imageUrl: 'https://example.com/rx.jpg',
         });
@@ -105,8 +194,9 @@ export default function CheckoutPage() {
       }
 
       const orderData = {
-        customerId: profile?.uid || 'customer-1',
+        customerId: profile.uid,
         pharmacyId: checkoutPharmacyId,
+        sellerId: pharmacy?.ownerId || pharmacy?.sellerId || '',
         medicineMasterId: cartItems[0]?.medicineMasterId || cartItems[0]?.medicineId || cartItems[0]?.id || '',
         quantity: Number(cartItems[0]?.quantity || 1),
         price: Number(cartItems[0]?.price || 0),
@@ -118,6 +208,7 @@ export default function CheckoutPage() {
         })),
         totalAmount: total,
         addressId: selectedAddress,
+        deliveryAddress: selectedAddressData,
         paymentMethod,
         paymentStatus: paymentResponse.status,
         paymentId: paymentResponse.paymentId,
@@ -127,16 +218,68 @@ export default function CheckoutPage() {
         prescriptionUrl: prescriptionUploaded ? 'https://example.com/rx.jpg' : null
       };
       successfulPaymentRecordId = paymentResponse.paymentId;
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_order_payload_constructed',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Order payload prepared.',
+        ids: { customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+        meta: { itemCount: orderData.items.length, totalAmount: orderData.totalAmount, paymentStatus: orderData.paymentStatus },
+      });
 
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_create_order_started',
+        status: 'start',
+        page: 'CheckoutPage',
+        message: 'Order creation request started.',
+      });
       const order = await api.createOrder(orderData);
+      if (!order?.id) {
+        throw new Error('Order creation did not return a valid order id.');
+      }
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_order_write_success',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Order write succeeded.',
+        ids: { orderId: order.id, customerId: profile.uid, pharmacyId: checkoutPharmacyId },
+      });
       if (paymentResponse.paymentId) {
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'checkout_payment_link_patch_started',
+          status: 'start',
+          page: 'CheckoutPage',
+          message: 'Linking payment with persisted order.',
+          ids: { orderId: order.id },
+          meta: { paymentId: paymentResponse.paymentId },
+        });
         await api.updatePayment(paymentResponse.paymentId, {
           orderId: order.id,
           notes: `Linked to order ${order.id}`,
         });
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'checkout_payment_link_patch_success',
+          status: 'success',
+          page: 'CheckoutPage',
+          message: 'Payment linked with order.',
+          ids: { orderId: order.id },
+          meta: { paymentId: paymentResponse.paymentId },
+        });
       }
       setOrderId(order.id);
-      logUI('ORDER_SUBMIT', { context: `Order ${order.id} created`, success: true });
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_success_ui_shown',
+        status: 'success',
+        page: 'CheckoutPage',
+        message: 'Checkout success state rendered.',
+        ids: { orderId: order.id },
+      });
 
       // 3. Clear Cart
       localStorage.removeItem('cart');
@@ -144,6 +287,15 @@ export default function CheckoutPage() {
       setStep(3); // Success step
     } catch (err: any) {
       if (successfulPaymentRecordId) {
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'checkout_payment_link_patch_failure',
+          status: 'warning',
+          page: 'CheckoutPage',
+          message: 'Order failed after payment success; payment flagged for manual review.',
+          meta: { paymentId: successfulPaymentRecordId },
+          error: appLogger.errorSummary(err),
+        });
         await api.updatePayment(successfulPaymentRecordId, {
           paymentStatus: 'pending',
           failureReason: 'Order creation failed after payment success. Needs manual review.',
@@ -151,7 +303,23 @@ export default function CheckoutPage() {
         });
       }
       setError(err.message || 'Failed to place order');
-      logUI('ORDER_SUBMIT', { context: 'Checkout submit failed', success: false, reason: err?.message || 'Unknown error' });
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'checkout_order_write_failure',
+        status: 'failure',
+        page: 'CheckoutPage',
+        message: 'Checkout flow failed.',
+        ids: { customerId: profile?.uid, pharmacyId: cartItems[0]?.pharmacyId },
+        meta: { cartCount: cartItems.length, totalAmount: total },
+        error: appLogger.errorSummary(err),
+      });
+      appLogger.log({
+        category: 'UI_ACTION',
+        event: 'checkout_failure_ui_shown',
+        status: 'warning',
+        page: 'CheckoutPage',
+        message: 'Checkout error message shown to user.',
+      });
     } finally {
       setLoading(false);
     }
@@ -228,8 +396,30 @@ export default function CheckoutPage() {
 
                 {step === 1 && (
                   <button 
-                    onClick={() => setStep(2)}
-                    disabled={!selectedAddress || !prescriptionUploaded}
+                    onClick={() => {
+                      if (!selectedAddress) {
+                        setError('Please select a delivery address to continue.');
+                        appLogger.log({
+                          category: 'ORDER_FLOW',
+                          event: 'checkout_step_transition_failure',
+                          status: 'warning',
+                          page: 'CheckoutPage',
+                          message: 'Continue to Payment blocked because no address is selected.',
+                        });
+                        return;
+                      }
+                      setError('');
+                      setStep(2);
+                      appLogger.log({
+                        category: 'ORDER_FLOW',
+                        event: 'checkout_step_transition_success',
+                        status: 'success',
+                        page: 'CheckoutPage',
+                        message: 'Checkout moved from delivery step to payment step.',
+                        meta: { fromStep: 1, toStep: 2 },
+                      });
+                    }}
+                    disabled={!selectedAddress}
                     className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all disabled:opacity-50"
                   >
                     Continue to Payment
