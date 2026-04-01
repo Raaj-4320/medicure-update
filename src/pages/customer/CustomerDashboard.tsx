@@ -99,17 +99,23 @@ const CustomerDashboard: React.FC = () => {
           {/* Nearby Pharmacies */}
           <div className="space-y-6 pt-4">
             <h2 className="text-xl font-bold text-slate-900">Pharmacies Near You</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {nearbyPharmacies.map(pharmacy => (
-                <Link key={pharmacy.id} to={`/pharmacy/${pharmacy.id}`} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-200 transition-all flex items-center gap-4">
-                  <img src={pharmacy.image || undefined} alt="" className="w-16 h-16 rounded-xl object-cover" />
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">{pharmacy.name || 'Profile Incomplete'}</h4>
-                    <p className="text-xs text-slate-500">{pharmacy.address.area}</p>
-                  </div>
-                </Link>
-              ))}
-            </div>
+            {nearbyPharmacies.length === 0 ? (
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 text-sm text-slate-600">
+                No pharmacies available yet. Try opening Discover Pharmacies.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {nearbyPharmacies.map(pharmacy => (
+                  <Link key={pharmacy.id} to={`/pharmacy/${pharmacy.id}`} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-200 transition-all flex items-center gap-4">
+                    <img src={pharmacy.image || undefined} alt="" className="w-16 h-16 rounded-xl object-cover" />
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">{pharmacy.name || 'Pharmacy'}</h4>
+                      <p className="text-xs text-slate-500">{pharmacy.address?.area || pharmacy.address?.city || 'Local area'}</p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
