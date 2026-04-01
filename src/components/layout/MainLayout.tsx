@@ -107,17 +107,8 @@ const MainLayout: React.FC = () => {
     } else if (profile.role === 'admin') {
       items.push(
         { label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
-        { label: 'User Management', icon: Users, path: '/admin/users' },
         { label: 'Verifications', icon: ShieldCheck, path: '/admin/verifications' },
-        { label: 'Medicine Catalog', icon: Package, path: '/admin/catalog' },
-        { label: 'Supply Chain', icon: ClipboardList, path: '/admin/analytics' },
-        { label: 'Logistics', icon: Truck, path: '/admin/logistics' },
-        { label: 'Manufacturers', icon: Factory, path: '/admin/manufacturers' },
-        { label: 'Risk & Compliance', icon: ShieldCheck, path: '/admin/compliance' },
-        { label: 'Medicine Safety', icon: ShieldAlert, path: '/admin/safety' },
-        { label: 'Financials', icon: DollarSign, path: '/admin/financials' },
-        { label: 'Advanced Logistics', icon: Navigation, path: '/admin/advanced-logistics' },
-        { label: 'Prescriptions', icon: FileText, path: '/admin/prescriptions' }
+        { label: 'Medicine Catalog', icon: Package, path: '/admin/catalog' }
       );
     } else if (profile.role === 'delivery') {
       items.push(
