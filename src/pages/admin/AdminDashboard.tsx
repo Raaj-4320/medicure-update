@@ -33,7 +33,7 @@ import {
 } from 'recharts';
 import { api } from '../../services/api';
 import { Link } from 'react-router-dom';
-import { logError } from '../../utils/flowLogger';
+import { appLogger } from '../../utils/observability';
 
 const AdminDashboard: React.FC = () => {
   const [stats, setStats] = useState({
@@ -54,8 +54,23 @@ const AdminDashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'admin_dashboard_load_started',
+      status: 'start',
+      page: 'AdminDashboard',
+      route: '/admin',
+      message: 'Admin dashboard mounted.',
+    });
     const fetchStats = async () => {
       try {
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'admin_orders_aggregate_query_started',
+          status: 'start',
+          page: 'AdminDashboard',
+          message: 'Admin aggregate/list query started.',
+        });
         const [users, pharmacies, medicines, orders] = await Promise.all([
           api.getUsers(),
           api.getPharmacies(),
@@ -73,8 +88,33 @@ const AdminDashboard: React.FC = () => {
           fraudAlerts: 0,
           pendingPrescriptions: orders.filter((o: any) => o.prescriptionUrl).length
         });
+        appLogger.log({
+          category: 'FIREBASE_QUERY',
+          event: 'admin_orders_aggregate_query_success',
+          status: 'success',
+          page: 'AdminDashboard',
+          message: 'Admin aggregate/list query succeeded.',
+          meta: { orderCount: orders.length, userCount: users.length, pharmacyCount: pharmacies.length },
+        });
+        if (orders.length === 0 && pharmacies.length > 0) {
+          appLogger.log({
+            category: 'SYSTEM_WARNING',
+            event: 'admin_metrics_without_order_visibility',
+            status: 'warning',
+            page: 'AdminDashboard',
+            message: 'Admin has platform metrics but no visible orders.',
+            meta: { pharmacies: pharmacies.length, users: users.length },
+          });
+        }
       } catch (error) {
-        console.error('Failed to fetch admin stats:', error);
+        appLogger.log({
+          category: 'FIREBASE_QUERY',
+          event: 'admin_orders_aggregate_query_failure',
+          status: 'failure',
+          page: 'AdminDashboard',
+          message: 'Admin aggregate/list query failed.',
+          error: appLogger.errorSummary(error),
+        });
       } finally {
         setLoading(false);
       }
@@ -211,9 +251,12 @@ const AdminDashboard: React.FC = () => {
           <div className="h-[300px]">
             {!chartReady || salesData.length === 0 ? (
               (() => {
-                logError('CHART', {
-                  type: 'UI',
-                  detail: !chartReady ? 'Revenue chart skipped: invalid dimensions' : 'Revenue chart skipped: no data',
+                appLogger.log({
+                  category: 'SYSTEM_WARNING',
+                  event: 'admin_revenue_chart_skipped',
+                  status: 'warning',
+                  page: 'AdminDashboard',
+                  message: !chartReady ? 'Revenue chart skipped: invalid dimensions' : 'Revenue chart skipped: no data',
                 });
                 return <div className="h-full flex items-center justify-center text-slate-500 text-sm">No chart data available.</div>;
               })()
