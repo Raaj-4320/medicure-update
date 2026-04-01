@@ -2,40 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { 
   Users, 
   Store, 
-  Package, 
-  ShoppingCart, 
-  TrendingUp, 
-  AlertTriangle, 
-  CheckCircle, 
   Clock,
-  Database,
   Loader2,
   ShieldCheck,
-  ShieldAlert,
-  DollarSign,
-  Truck,
-  FileText,
   Activity
 } from 'lucide-react';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  PieChart,
-  Pie,
-  Cell
-} from 'recharts';
 import { api } from '../../services/api';
 import { Link } from 'react-router-dom';
-import { logError } from '../../utils/flowLogger';
+import { appLogger } from '../../utils/observability';
 
 const AdminDashboard: React.FC = () => {
+  const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalPharmacies: 0,
@@ -47,15 +24,25 @@ const AdminDashboard: React.FC = () => {
     pendingPrescriptions: 0
   });
   const [loading, setLoading] = useState(true);
-  const [chartReady, setChartReady] = useState(false);
 
   useEffect(() => {
-    setChartReady(true);
-  }, []);
-
-  useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'admin_dashboard_load_started',
+      status: 'start',
+      page: 'AdminDashboard',
+      route: '/admin',
+      message: 'Admin dashboard mounted.',
+    });
     const fetchStats = async () => {
       try {
+        appLogger.log({
+          category: 'ORDER_FLOW',
+          event: 'admin_orders_aggregate_query_started',
+          status: 'start',
+          page: 'AdminDashboard',
+          message: 'Admin aggregate/list query started.',
+        });
         const [users, pharmacies, medicines, orders] = await Promise.all([
           api.getUsers(),
           api.getPharmacies(),
@@ -73,8 +60,34 @@ const AdminDashboard: React.FC = () => {
           fraudAlerts: 0,
           pendingPrescriptions: orders.filter((o: any) => o.prescriptionUrl).length
         });
+        setRecentOrders(orders.slice(0, 8));
+        appLogger.log({
+          category: 'FIREBASE_QUERY',
+          event: 'admin_orders_aggregate_query_success',
+          status: 'success',
+          page: 'AdminDashboard',
+          message: 'Admin aggregate/list query succeeded.',
+          meta: { orderCount: orders.length, userCount: users.length, pharmacyCount: pharmacies.length },
+        });
+        if (orders.length === 0 && pharmacies.length > 0) {
+          appLogger.log({
+            category: 'SYSTEM_WARNING',
+            event: 'admin_metrics_without_order_visibility',
+            status: 'warning',
+            page: 'AdminDashboard',
+            message: 'Admin has platform metrics but no visible orders.',
+            meta: { pharmacies: pharmacies.length, users: users.length },
+          });
+        }
       } catch (error) {
-        console.error('Failed to fetch admin stats:', error);
+        appLogger.log({
+          category: 'FIREBASE_QUERY',
+          event: 'admin_orders_aggregate_query_failure',
+          status: 'failure',
+          page: 'AdminDashboard',
+          message: 'Admin aggregate/list query failed.',
+          error: appLogger.errorSummary(error),
+        });
       } finally {
         setLoading(false);
       }
@@ -84,30 +97,6 @@ const AdminDashboard: React.FC = () => {
     const interval = setInterval(fetchStats, 10000);
     return () => clearInterval(interval);
   }, []);
-
-  const salesData = [
-    { name: 'Mon', sales: 4000, revenue: 45000 },
-    { name: 'Tue', sales: 3000, revenue: 52000 },
-    { name: 'Wed', sales: 2000, revenue: 48000 },
-    { name: 'Thu', sales: 2780, revenue: 61000 },
-    { name: 'Fri', sales: 1890, revenue: 55000 },
-    { name: 'Sat', sales: 2390, revenue: 67000 },
-    { name: 'Sun', sales: 3490, revenue: 72000 },
-  ];
-
-  const categoryData = [
-    { name: 'Analgesics', value: 400 },
-    { name: 'Antibiotics', value: 300 },
-    { name: 'Cardio', value: 300 },
-    { name: 'Respiratory', value: 200 },
-  ];
-
-  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'];
-
-  const MOCK_AUDIT_LOGS = [
-    { id: '1', adminName: 'Raj Golakiya', action: 'Verified Pharmacy', targetType: 'Pharmacy', targetId: 'PH001', timestamp: new Date().toISOString() },
-    { id: '2', adminName: 'System', action: 'Flagged Order', targetType: 'Order', targetId: 'ORD005', timestamp: new Date().toISOString() },
-  ];
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>;
 
@@ -161,159 +150,39 @@ const AdminDashboard: React.FC = () => {
 
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <div className="p-2 bg-red-50 text-red-600 rounded-lg"><ShieldAlert className="w-6 h-6" /></div>
-            <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full">Critical</span>
+            <div className="p-2 bg-slate-100 text-slate-600 rounded-lg"><Activity className="w-6 h-6" /></div>
+            <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded-full">Live</span>
           </div>
-          <p className="text-slate-500 text-sm font-medium">Fraud Alerts</p>
-          <h3 className="text-2xl font-bold text-slate-900">{stats.fraudAlerts}</h3>
+          <p className="text-slate-500 text-sm font-medium">Total Orders</p>
+          <h3 className="text-2xl font-bold text-slate-900">{stats.totalOrders}</h3>
         </div>
       </div>
 
-      {/* Module Quick Access */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {[
-          { name: 'Compliance', path: '/admin/compliance', icon: ShieldCheck, color: 'bg-blue-50 text-blue-600' },
-          { name: 'Safety', path: '/admin/safety', icon: ShieldAlert, color: 'bg-red-50 text-red-600' },
-          { name: 'Financials', path: '/admin/financials', icon: DollarSign, color: 'bg-emerald-50 text-emerald-600' },
-          { name: 'Logistics', path: '/admin/advanced-logistics', icon: Truck, color: 'bg-orange-50 text-orange-600' },
-          { name: 'Prescriptions', path: '/admin/prescriptions', icon: FileText, color: 'bg-purple-50 text-purple-600' }
-        ].map((module) => (
-          <Link 
-            key={module.name} 
-            to={module.path}
-            className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-200 hover:shadow-md transition-all group"
-          >
-            <div className={`w-10 h-10 ${module.color} rounded-xl flex items-center justify-center mb-3 group-hover:scale-110 transition-transform`}>
-              <module.icon className="w-5 h-5" />
-            </div>
-            <h4 className="font-bold text-slate-900 text-sm">{module.name}</h4>
-            <p className="text-[10px] text-slate-500">Manage module settings</p>
-          </Link>
-        ))}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6">
+        <h3 className="text-lg font-bold text-slate-900 mb-2">Core Admin Actions</h3>
+        <p className="text-sm text-slate-600 mb-4">Use the sidebar to verify sellers and manage medicine catalog for the demo flow.</p>
+        <div className="flex gap-3">
+          <Link to="/admin/verifications" className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold">Open Verifications</Link>
+          <Link to="/admin/catalog" className="px-4 py-2 rounded-xl bg-slate-100 text-slate-800 text-sm font-semibold">Open Catalog</Link>
+        </div>
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-bold text-slate-900">Revenue Trend</h3>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 text-xs font-bold text-emerald-600">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full" />
-                Revenue
-              </div>
-              <div className="flex items-center gap-1 text-xs font-bold text-slate-400">
-                <div className="w-2 h-2 bg-slate-300 rounded-full" />
-                Sales
-              </div>
-            </div>
-          </div>
-          <div className="h-[300px]">
-            {!chartReady || salesData.length === 0 ? (
-              (() => {
-                logError('CHART', {
-                  type: 'UI',
-                  detail: !chartReady ? 'Revenue chart skipped: invalid dimensions' : 'Revenue chart skipped: no data',
-                });
-                return <div className="h-full flex items-center justify-center text-slate-500 text-sm">No chart data available.</div>;
-              })()
-            ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={salesData}>
-                <defs>
-                  <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                <Tooltip 
-                  contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                />
-                <Area type="monotone" dataKey="revenue" stroke="#10b981" fillOpacity={1} fill="url(#colorRev)" strokeWidth={3} />
-              </AreaChart>
-            </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <h3 className="text-lg font-bold text-slate-900 mb-6">Medicine Categories</h3>
-          <div className="h-[300px]">
-            {!chartReady || categoryData.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-slate-500 text-sm">No chart data available.</div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {categoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-          <div className="mt-4 space-y-2">
-            {categoryData.map((item, index) => (
-              <div key={item.name} className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: COLORS[index]}}></div>
-                  <span className="text-slate-600">{item.name}</span>
-                </div>
-                <span className="font-bold text-slate-900">{item.value}</span>
+      <div className="bg-white rounded-2xl border border-slate-200 p-6">
+        <h3 className="text-lg font-bold text-slate-900 mb-3">Recent Orders</h3>
+        {recentOrders.length === 0 ? (
+          <p className="text-sm text-slate-500">No orders yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {recentOrders.map((order) => (
+              <div key={order.id} className="flex items-center justify-between text-sm border-b border-slate-100 pb-2">
+                <span className="font-medium text-slate-800">#{order.id}</span>
+                <span className="text-slate-500">{order.customerId || 'unknown-customer'}</span>
+                <span className="text-slate-500">{order.pharmacyId || 'unknown-pharmacy'}</span>
+                <span className="font-semibold text-emerald-700">₹{Number(order.totalAmount || 0).toFixed(2)}</span>
               </div>
             ))}
           </div>
-        </div>
-      </div>
-
-      {/* Recent Activity Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-lg font-bold text-slate-900">Recent Audit Logs</h3>
-          <Link to="/admin/compliance" className="text-emerald-600 text-sm font-semibold hover:underline">View All Logs</Link>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
-                <th className="px-6 py-4 font-semibold">Admin</th>
-                <th className="px-6 py-4 font-semibold">Action</th>
-                <th className="px-6 py-4 font-semibold">Target</th>
-                <th className="px-6 py-4 font-semibold">Timestamp</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {MOCK_AUDIT_LOGS.slice(0, 5).map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-600">
-                        {log.adminName.charAt(0)}
-                      </div>
-                      <span className="text-sm font-medium text-slate-900">{log.adminName}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-slate-600">{log.action}</td>
-                  <td className="px-6 py-4 text-xs font-mono text-slate-500">{log.targetType}: {log.targetId}</td>
-                  <td className="px-6 py-4 text-sm text-slate-500">{new Date(log.timestamp).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        )}
       </div>
     </div>
   );
