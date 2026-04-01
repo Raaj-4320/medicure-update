@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   ShoppingBag, 
   MapPin, 
@@ -14,30 +14,55 @@ import {
 import { useAuth } from '../../AuthContext';
 import { useLocation } from '../../LocationContext';
 import { Order, Pharmacy } from '../../types';
-import { MOCK_ORDERS } from '../../staticData';
 import { logUI } from '../../utils/uiLogger';
 import { api } from '../../services/api';
 
 const CustomerDashboard: React.FC = () => {
   const { profile } = useAuth();
-  const { location } = useLocation();
+  const { location, setLocation } = useLocation();
+  const navigate = useNavigate();
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [nearbyPharmacies, setNearbyPharmacies] = useState<Pharmacy[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!profile) return;
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
       
-      // Use mock data
-      setRecentOrders(MOCK_ORDERS.filter(o => o.customerId === profile.uid).slice(0, 3) as any);
-      const customerVisiblePharmacies = await api.getPharmaciesForCustomer();
+      const [orders, customerVisiblePharmacies] = await Promise.all([
+        api.getOrders({ customerId: profile.uid }),
+        api.getPharmaciesForCustomer(),
+      ]);
+      const recent = [...orders]
+        .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+        .slice(0, 3);
+      setRecentOrders(recent as any);
       setNearbyPharmacies(customerVisiblePharmacies.slice(0, 4) as any);
       setLoading(false);
     };
 
     fetchData().catch(() => setLoading(false));
   }, [profile, location]);
+
+  const handleChangeLocation = () => {
+    const city = window.prompt('Enter city', location?.city || 'Bangalore');
+    if (!city) return;
+    const area = window.prompt('Enter area', location?.area || 'Downtown');
+    if (!area) return;
+    setLocation({
+      country: location?.country || 'India',
+      state: location?.state || 'Karnataka',
+      city,
+      area,
+      locality: location?.locality || area,
+      pincode: location?.pincode || '560001',
+      landmark: location?.landmark || '',
+    });
+    logUI('ACTION', { component: 'CustomerDashboard', action: 'Change Location', success: true });
+  };
 
   return (
     <div className="space-y-8">
@@ -102,10 +127,10 @@ const CustomerDashboard: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {nearbyPharmacies.map(pharmacy => (
                 <Link key={pharmacy.id} to={`/pharmacy/${pharmacy.id}`} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-200 transition-all flex items-center gap-4">
-                  <img src={pharmacy.image || undefined} alt="" className="w-16 h-16 rounded-xl object-cover" />
+                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500" />
                   <div>
                     <h4 className="font-bold text-slate-900 text-sm">{pharmacy.name || 'Profile Incomplete'}</h4>
-                    <p className="text-xs text-slate-500">{pharmacy.address.area}</p>
+                    <p className="text-xs text-slate-500">{(pharmacy.address as any)?.area || (pharmacy.address as any)?.addressLine || 'Address unavailable'}</p>
                   </div>
                 </Link>
               ))}
@@ -127,15 +152,7 @@ const CustomerDashboard: React.FC = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() =>
-                    logUI('ACTION', {
-                      component: 'CustomerDashboard',
-                      action: 'Change Location',
-                      expected: 'should open location selector',
-                      status: 'partial',
-                      reason: 'Location selector route not implemented yet',
-                    })
-                  }
+                  onClick={handleChangeLocation}
                   className="w-full py-2 text-sm font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors"
                 >
                   Change Location
@@ -149,7 +166,7 @@ const CustomerDashboard: React.FC = () => {
           <div className="bg-slate-900 p-6 rounded-2xl text-white">
             <h3 className="font-bold mb-2">Need Help?</h3>
             <p className="text-xs text-slate-400 mb-4">Our support team is available 24/7 for your medical queries.</p>
-            <button className="w-full py-2 bg-white/10 hover:bg-white/20 text-white text-sm font-bold rounded-lg transition-all">
+            <button onClick={() => navigate('/orders')} className="w-full py-2 bg-white/10 hover:bg-white/20 text-white text-sm font-bold rounded-lg transition-all">
               Contact Support
             </button>
           </div>

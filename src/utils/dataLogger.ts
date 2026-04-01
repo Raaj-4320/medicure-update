@@ -15,8 +15,16 @@ type DataLogInput = {
 
 const dedupeMap = new Map<string, number>();
 const DEDUPE_MS = 1500;
+const CUSTOMER_ROUTES = ['/customer', '/discover', '/pharmacy', '/cart', '/checkout', '/orders'];
+
+const shouldMuteCustomerConsole = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname || '';
+  return CUSTOMER_ROUTES.some((route) => path.startsWith(route));
+};
 
 export function logDataFlow(name: string, input: DataLogInput): void {
+  if (shouldMuteCustomerConsole()) return;
   const receivedCount = Array.isArray(input.received) ? input.received.length : input.received ? 1 : 0;
   const key = `${name}:${input.source}:${receivedCount}:${input.rendered}:${input.placeholder}`;
   const now = Date.now();

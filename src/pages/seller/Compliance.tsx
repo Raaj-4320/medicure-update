@@ -13,7 +13,10 @@ const Compliance: React.FC = () => {
   const [documentUrl, setDocumentUrl] = useState('');
 
   const loadDocs = async () => {
-    if (!profile?.uid) return;
+    if (!profile?.uid) {
+    setLoading(false);
+    return;
+  }
     setLoading(true);
     setError('');
     try {

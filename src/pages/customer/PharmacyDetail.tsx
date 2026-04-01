@@ -38,19 +38,23 @@ const PharmacyDetail: React.FC = () => {
 
         // 2. Fetch Seller Medicines (Inventory)
         const inventory = await api.getInventory({ pharmacyId: id });
-        
-        // 3. Fetch Master Data for each medicine
-        const enrichedMeds = await Promise.all(inventory.map(async (sm: any) => {
-          const mData = await api.getMedicines({ id: sm.medicineMasterId });
-          return { 
-            ...sm, 
-            masterData: Array.isArray(mData) ? mData[0] : mData 
-          };
-        }));
+
+        // 3. Join with medicine master in one pass
+        const masters = await api.getMedicines({ includeAll: 'true' });
+        const masterById = new Map((Array.isArray(masters) ? masters : []).map((m: any) => [m.id, m]));
+        const enrichedMeds = (Array.isArray(inventory) ? inventory : [])
+          .map((sm: any) => ({
+            ...sm,
+            stock: Number(sm?.stock ?? 0),
+            isVisible: Boolean(sm?.isVisible ?? true),
+            masterData: masterById.get(sm.medicineMasterId) || null,
+          }))
+          .filter((sm: any) => sm.isVisible && sm.stock > 0);
 
         setMedicines(enrichedMeds);
       } catch (err) {
-        console.error('Error fetching pharmacy details:', err);
+        setPharmacy(null);
+        setMedicines([]);
       } finally {
         setLoading(false);
       }
@@ -59,10 +63,12 @@ const PharmacyDetail: React.FC = () => {
     fetchData();
   }, [id]);
 
-  const filteredMeds = medicines.filter(m => 
-    m.masterData?.brandName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.masterData?.genericName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredMeds = medicines.filter((m) => {
+    const brand = String(m.masterData?.brandName || '').toLowerCase();
+    const generic = String(m.masterData?.genericName || '').toLowerCase();
+    const query = searchQuery.toLowerCase();
+    return brand.includes(query) || generic.includes(query);
+  });
 
   const [cart, setCart] = useState<any[]>(() => {
     const saved = localStorage.getItem('cart');
@@ -119,8 +125,7 @@ const PharmacyDetail: React.FC = () => {
 
       {/* Header Card */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="h-64 relative">
-          <img src={pharmacy.image || undefined} alt={pharmacy.name || 'Profile Incomplete'} className="w-full h-full object-cover" />
+        <div className="h-64 relative bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500">
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
           <div className="absolute bottom-6 left-8 text-white">
             <h1 className="text-3xl font-bold mb-2">{pharmacy.name || 'Profile Incomplete'}</h1>
@@ -178,12 +183,12 @@ const PharmacyDetail: React.FC = () => {
           {filteredMeds.map((med) => (
             <div key={med.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex gap-4 hover:border-emerald-200 transition-all">
               <div className="w-24 h-24 bg-slate-50 rounded-xl overflow-hidden flex-shrink-0">
-                <img src={med.masterData?.image} alt="" className="w-full h-full object-cover" />
+                <img src={med.masterData?.image || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=300&q=80'} alt={med.masterData?.brandName || 'Medicine'} className="w-full h-full object-cover" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between mb-1">
                   <div>
-                    <h4 className="font-bold text-slate-900 truncate">{med.masterData?.brandName}</h4>
+                    <h4 className="font-bold text-slate-900 truncate">{med.masterData?.brandName || 'Medicine'}</h4>
                     <p className="text-xs text-slate-500 italic">{med.masterData?.genericName}</p>
                   </div>
                   {med.masterData?.rxRequired && (

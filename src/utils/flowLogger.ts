@@ -12,10 +12,18 @@ type FlowInput = {
   expectedKeys?: string[];
   suggestion?: string;
   partialType?: 'NOT_IMPLEMENTED' | 'DATA_MISSING' | 'UI_INCOMPLETE';
+  allowEmpty?: boolean;
 };
 
 const FLOW_DEDUP_WINDOW_MS = 1500;
 const flowLogCache = new Map<string, number>();
+const CUSTOMER_ROUTES = ['/customer', '/discover', '/pharmacy', '/cart', '/checkout', '/orders'];
+
+const shouldMuteCustomerConsole = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname || '';
+  return CUSTOMER_ROUTES.some((route) => path.startsWith(route));
+};
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -30,8 +38,10 @@ const inferStatus = (input: FlowInput): FlowStatus => {
   if (input.success === false || input.error) return 'fail';
 
   const received = input.received;
-  if (Array.isArray(received) && received.length === 0) return 'fail';
-  if (isObject(received) && 'count' in received && Number((received as Record<string, unknown>).count) === 0) return 'fail';
+  if (!input.allowEmpty) {
+    if (Array.isArray(received) && received.length === 0) return 'fail';
+    if (isObject(received) && 'count' in received && Number((received as Record<string, unknown>).count) === 0) return 'fail';
+  }
   if (input.requiredFields?.length && !hasRequiredFields(received, input.requiredFields)) return 'partial';
 
   return 'success';
@@ -76,6 +86,7 @@ const suggestionByCause: Record<FlowCause, string> = {
 };
 
 export const logFlow = (name: string, input: FlowInput): void => {
+  if (shouldMuteCustomerConsole()) return;
   const status = inferStatus(input);
   const cause = detectFlowCause(input, status);
   const step = input.step || 'RESULT';
@@ -115,6 +126,7 @@ export const logFlow = (name: string, input: FlowInput): void => {
 };
 
 export const logError = (area: string, input: { type: 'UI' | 'API' | 'DATA' | 'JOIN'; detail: string }): void => {
+  if (shouldMuteCustomerConsole()) return;
   console.group(`[ERROR][${area}]`);
   console.error('TYPE:', input.type);
   console.error('DETAIL:', input.detail);
@@ -123,7 +135,7 @@ export const logError = (area: string, input: { type: 'UI' | 'API' | 'DATA' | 'J
 
 export const logTraceFlow = (name: string, traceId: string, input?: { stage?: string; detail?: unknown }): void => {
   const isDev = typeof import.meta !== 'undefined' && Boolean(import.meta.env?.DEV);
-  if (!isDev) return;
+  if (!isDev || shouldMuteCustomerConsole()) return;
   console.group(`[TRACE][FLOW][${name}]`);
   console.log('TRACE_ID:', traceId);
   if (input?.stage) {
@@ -142,6 +154,7 @@ export const validateDataBinding = (params: {
   expectedKeys: string[];
   sample?: unknown;
 }): void => {
+  if (shouldMuteCustomerConsole()) return;
   if (params.dataCount > 0 && params.renderedCount === 0) {
     console.group('[ERROR][DATA_BINDING]');
     console.error('CAUSE:', 'UI not mapping API result');
@@ -159,6 +172,7 @@ export const checkExpectations = (params: {
   expected: string[];
   result: Record<string, unknown>;
 }): void => {
+  if (shouldMuteCustomerConsole()) return;
   const missing = params.expected.filter((key) => {
     const value = params.result[key];
     if (Array.isArray(value)) return value.length === 0;
@@ -171,6 +185,21 @@ export const checkExpectations = (params: {
     console.info('[SUGGESTION]', `Ensure ${missing.join(', ')} is loaded in ${params.page}`);
     console.groupEnd();
   }
+};
+
+export const logRouteState = (params: {
+  route: string;
+  state: 'ok' | 'blocked' | 'error';
+  reason?: string;
+  detail?: unknown;
+}): void => {
+  if (shouldMuteCustomerConsole()) return;
+  const method = params.state === 'error' ? console.error : params.state === 'blocked' ? console.warn : console.info;
+  console.group(`[ROUTE][${params.route}]`);
+  method('STATE:', params.state.toUpperCase());
+  if (params.reason) method('REASON:', params.reason);
+  if (params.detail !== undefined) console.log('DETAIL:', params.detail);
+  console.groupEnd();
 };
 
 export const validateRequiredFields = (

@@ -16,8 +16,16 @@ type UILogPayload = {
 
 const UI_DEDUP_WINDOW_MS = 1000;
 const uiLogCache = new Map<string, number>();
+const CUSTOMER_ROUTES = ['/customer', '/discover', '/pharmacy', '/cart', '/checkout', '/orders'];
+
+const shouldMuteCustomerConsole = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname || '';
+  return CUSTOMER_ROUTES.some((route) => path.startsWith(route));
+};
 
 export function logUI(actionName: string, payload: UILogPayload): void {
+  if (shouldMuteCustomerConsole()) return;
   const component = payload.component || 'UnknownComponent';
   const action = payload.action || payload.context || actionName;
   const expected = payload.expected || 'should trigger handler and update UI';
