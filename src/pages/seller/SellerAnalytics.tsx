@@ -13,7 +13,10 @@ const SellerAnalytics: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-      if (!profile?.uid) return;
+      if (!profile?.uid) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError('');
       try {

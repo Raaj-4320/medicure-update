@@ -45,6 +45,11 @@ service cloud.firestore {
     match /pharmacies/{pharmacyId} {
       allow read: if resource.data.status == 'verified' || resource.data.verificationStatus == 'verified';
       allow write: if isKnownRole() && (isAdmin() || (isSeller() && request.auth.uid == pharmacyId));
+
+      match /profileSettingsLogs/{logId} {
+        allow read: if isKnownRole() && (isAdmin() || (isSeller() && request.auth.uid == pharmacyId));
+        allow create: if isKnownRole() && (isAdmin() || (isSeller() && request.auth.uid == pharmacyId));
+      }
     }
 
     match /inventory/{inventoryId} {
@@ -64,6 +69,23 @@ service cloud.firestore {
         isAdmin()
         || (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid)
       );
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isKnownRole() && (
+        isAdmin()
+        || (isCustomer() && resource.data.customerId == request.auth.uid)
+        || (isSeller() && resource.data.sellerId == request.auth.uid)
+      );
+      allow create: if isKnownRole() && (
+        isAdmin()
+        || (isCustomer() && request.resource.data.customerId == request.auth.uid)
+      );
+      allow update: if isKnownRole() && (
+        isAdmin()
+        || (isCustomer() && resource.data.customerId == request.auth.uid)
+      );
+      allow delete: if isAdmin();
     }
 
     match /analytics/{analyticsId} {

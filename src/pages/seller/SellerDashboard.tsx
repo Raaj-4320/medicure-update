@@ -33,7 +33,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../../AuthContext';
 import { Order, Prescription, Notification } from '../../types';
-import { api, isPharmacyProfileComplete } from '../../services/api';
+import { api, getPharmacyCompletenessSnapshot, isPharmacyProfileComplete } from '../../services/api';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { checkExpectations, logFlow } from '../../utils/flowLogger';
@@ -69,7 +69,10 @@ const SellerDashboard: React.FC = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!profile) return;
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
       
       try {
         setLoading(true);
@@ -105,23 +108,35 @@ const SellerDashboard: React.FC = () => {
         const isComplete = isPharmacyProfileComplete(myPharmacy as any);
         setProfileComplete(isComplete);
         if (!isComplete) {
-          logFlow('SELLER_PROFILE_GATE', {
+          const completenessDebug = getPharmacyCompletenessSnapshot(myPharmacy as any);
+          console.info('[SELLER_PROFILE_COMPLETENESS_OPTIONAL]', {
+            expected: completenessDebug.expected,
+            resolved: completenessDebug.resolved,
+            missing: completenessDebug.missing,
+            actual: myPharmacy,
+          });
+          logFlow('SELLER_PROFILE_REMINDER', {
             expected: ['name', 'address', 'phone', 'license', 'ownerName'],
-            received: { pharmacyId: myPharmacy.id, complete: false },
+            received: { pharmacyId: myPharmacy.id, complete: false, missing: completenessDebug.missing },
             status: 'partial',
             partialType: 'DATA_MISSING',
-            suggestion: 'Complete pharmacy profile before accessing seller dashboard.',
+            suggestion: 'Profile is incomplete. Seller can continue and update details anytime from Profile.',
           });
-          return;
         }
         setPharmacyStatus((myPharmacy.status || myPharmacy.verificationStatus || 'pending') as 'pending' | 'verified' | 'rejected');
 
-        const [sellerOrders, inventory, prescriptions, sellerNotifications] = await Promise.all([
+        const [sellerOrders, inventoryByPharmacy, inventoryBySeller, prescriptions, sellerNotifications] = await Promise.all([
           api.getOrders({ pharmacyId: myPharmacy.id }),
           api.getInventory({ pharmacyId: myPharmacy.id }),
+          api.getInventory({ sellerId: profile.uid }),
           api.getPrescriptions({ pharmacyId: myPharmacy.id }),
           api.getNotifications({ userId: profile.uid }),
         ]);
+        const inventoryMap = new Map<string, any>();
+        [...(Array.isArray(inventoryByPharmacy) ? inventoryByPharmacy : []), ...(Array.isArray(inventoryBySeller) ? inventoryBySeller : [])].forEach((item: any) => {
+          if (item?.id) inventoryMap.set(item.id, item);
+        });
+        const inventory = Array.from(inventoryMap.values());
         logFlow('DASHBOARD_LOAD', {
           expected: ['orders', 'inventory', 'prescriptions', 'notifications'],
           received: {
@@ -203,6 +218,11 @@ const SellerDashboard: React.FC = () => {
     };
 
     fetchData();
+    const handleProfileRefresh = () => fetchData();
+    window.addEventListener('seller-profile-updated', handleProfileRefresh as EventListener);
+    return () => {
+      window.removeEventListener('seller-profile-updated', handleProfileRefresh as EventListener);
+    };
   }, [profile]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>;
@@ -260,17 +280,6 @@ const SellerDashboard: React.FC = () => {
       </div>
     );
   }
-  if (!profileComplete) {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">Complete your pharmacy profile to continue</h2>
-        <p className="text-slate-600">Required: pharmacyName, address, phone, license, ownerName.</p>
-        <Link to="/seller/profile" className="inline-flex mt-4 px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold">
-          Complete Profile
-        </Link>
-      </div>
-    );
-  }
   if (pharmacyStatus !== 'verified') {
     return (
       <div className="bg-white rounded-2xl border border-amber-200 p-8">
@@ -293,6 +302,16 @@ const SellerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-8 pb-12">
+      {!profileComplete && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+          <p className="text-amber-800 text-sm">
+            Your store profile is incomplete. You can continue using the seller panel and update profile details anytime.
+          </p>
+          <Link to="/seller/profile" className="inline-flex mt-2 text-sm font-semibold text-emerald-700 hover:underline">
+            Update Store Profile
+          </Link>
+        </div>
+      )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Store Dashboard</h1>
@@ -440,8 +459,8 @@ const SellerDashboard: React.FC = () => {
               {[
                 { label: 'View Catalog', icon: Package, link: '/seller/catalog', color: 'emerald' },
                 { label: 'Update Stock', icon: RefreshCw, link: '/seller/inventory', color: 'blue' },
-                { label: 'View Payouts', icon: DollarSign, link: '/seller/payouts', color: 'amber' },
-                { label: 'Compliance', icon: ShieldCheck, link: '/seller/compliance', color: 'purple' },
+                { label: 'View Orders', icon: ClipboardList, link: '/seller/orders', color: 'amber' },
+                { label: 'Notifications', icon: Bell, link: '/seller/notifications', color: 'purple' },
               ].map((action, i) => (
                 <Link 
                   key={i}

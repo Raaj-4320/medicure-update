@@ -15,15 +15,30 @@ import {
 import { api } from '../../services/api';
 import { useLocation } from '../../LocationContext';
 import { Pharmacy } from '../../types';
-import { logUI } from '../../utils/uiLogger';
 import { checkExpectations, validateDataBinding } from '../../utils/flowLogger';
 import { logDataFlow } from '../../utils/dataLogger';
 
 const PharmacyDiscovery: React.FC = () => {
-  const { location } = useLocation();
+  const { location, setLocation } = useLocation();
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleQuickLocationUpdate = () => {
+    const city = window.prompt('Enter city', location?.city || 'Bangalore');
+    if (!city) return;
+    const area = window.prompt('Enter area/locality', location?.area || 'Downtown');
+    if (!area) return;
+    setLocation({
+      country: location?.country || 'India',
+      state: location?.state || 'Karnataka',
+      city,
+      area,
+      locality: location?.locality || area,
+      pincode: location?.pincode || '560001',
+      landmark: location?.landmark || '',
+    });
+  };
 
   useEffect(() => {
     const fetchPharmacies = async () => {
@@ -58,7 +73,7 @@ const PharmacyDiscovery: React.FC = () => {
     };
 
     fetchPharmacies();
-  }, [location]);
+  }, [location, searchQuery]);
 
   const filteredList = pharmacies.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -82,15 +97,7 @@ const PharmacyDiscovery: React.FC = () => {
         <h2 className="text-2xl font-bold text-slate-900 mb-2">Location Not Set</h2>
         <p className="text-slate-500 max-w-md mb-8">Please set your delivery location to discover pharmacies that serve your area.</p>
         <button
-          onClick={() =>
-            logUI('ACTION', {
-              component: 'PharmacyDiscovery',
-              action: 'Set Location',
-              expected: 'should open location modal',
-              status: 'partial',
-              reason: 'Location picker not wired in this page',
-            })
-          }
+          onClick={handleQuickLocationUpdate}
           className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-semibold shadow-lg shadow-emerald-100"
         >
           Set Location
@@ -119,16 +126,9 @@ const PharmacyDiscovery: React.FC = () => {
             />
           </div>
           <button
-            onClick={() =>
-              logUI('ACTION', {
-                component: 'PharmacyDiscovery',
-                action: 'Filter Pharmacies',
-                expected: 'should apply filter options',
-                status: 'partial',
-                reason: 'Filter options are not implemented',
-              })
-            }
-            className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50"
+            disabled
+            title="Additional filters are not available in this demo build yet."
+            className="p-2 bg-white border border-slate-200 rounded-xl text-slate-400 cursor-not-allowed"
           >
             <Filter className="w-5 h-5" />
           </button>
@@ -147,12 +147,7 @@ const PharmacyDiscovery: React.FC = () => {
               to={`/pharmacy/${pharmacy.id}`}
               className="group bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-all"
             >
-              <div className="h-48 relative overflow-hidden">
-                <img 
-                  src={pharmacy.image || undefined} 
-                  alt={pharmacy.name} 
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
+              <div className="h-48 relative overflow-hidden bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500">
                 <div className="absolute top-4 right-4 px-2 py-1 bg-white/90 backdrop-blur rounded-lg flex items-center gap-1 text-xs font-bold text-slate-900">
                   <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
                   {pharmacy.rating.toFixed(1)}
