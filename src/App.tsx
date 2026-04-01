@@ -3,6 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import { AuthProvider, useAuth } from './AuthContext';
 import { LocationProvider } from './LocationContext';
 import { ensureSeedData } from './utils/ensureSeedData';
+import { appLogger } from './utils/observability';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 
 // Layouts
 import MainLayout from './components/layout/MainLayout';
@@ -85,11 +87,24 @@ const ProtectedRoute: React.FC<{
 
 const AppRoutes = () => {
   const { profile } = useAuth();
-  useLocation();
+  const location = useLocation();
 
   useEffect(() => {
     ensureSeedData();
   }, []);
+
+  useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'route_changed',
+      status: 'success',
+      page: 'AppRoutes',
+      route: location.pathname,
+      scope: 'router',
+      message: 'Route rendered.',
+      meta: { role: profile?.role || 'guest' },
+    });
+  }, [location.pathname, profile?.role]);
 
   const getDashboardRedirect = () => {
     if (!profile) return <LandingPage />;
@@ -122,8 +137,8 @@ const AppRoutes = () => {
         <Route path="discover" element={<PharmacyDiscovery />} />
         <Route path="pharmacy/:id" element={<PharmacyDetail />} />
         <Route path="cart" element={<CartPage />} />
-        <Route path="checkout" element={<CheckoutPage />} />
-        <Route path="orders" element={<OrderHistory />} />
+        <Route path="checkout" element={<AppErrorBoundary page="CheckoutPage"><CheckoutPage /></AppErrorBoundary>} />
+        <Route path="orders" element={<AppErrorBoundary page="OrderHistory"><OrderHistory /></AppErrorBoundary>} />
       </Route>
 
       {/* Seller Routes */}
@@ -136,11 +151,11 @@ const AppRoutes = () => {
   }
 >
         <Route index element={<SellerDashboard />} />
-        <Route path="inventory" element={<InventoryManagement />} />
-        <Route path="orders" element={<SellerOrders />} />
+        <Route path="inventory" element={<AppErrorBoundary page="InventoryManagement"><InventoryManagement /></AppErrorBoundary>} />
+        <Route path="orders" element={<AppErrorBoundary page="SellerOrders"><SellerOrders /></AppErrorBoundary>} />
         <Route path="profile" element={<PharmacyProfile />} />
         <Route path="prescriptions" element={<PrescriptionManagement />} />
-        <Route path="catalog" element={<SellerCatalog />} />
+        <Route path="catalog" element={<AppErrorBoundary page="SellerCatalog"><SellerCatalog /></AppErrorBoundary>} />
         <Route path="returns" element={<ReturnsReplacements />} />
         <Route path="payouts" element={<SellerPayouts />} />
         <Route path="analytics" element={<SellerAnalytics />} />
@@ -158,10 +173,10 @@ const AppRoutes = () => {
     </ProtectedRoute>
   }
 >
-        <Route index element={<AdminDashboard />} />
+        <Route index element={<AppErrorBoundary page="AdminDashboard"><AdminDashboard /></AppErrorBoundary>} />
         <Route path="users" element={<UserManagement />} />
         <Route path="verifications" element={<SellerVerification />} />
-        <Route path="catalog" element={<MedicineMasterCatalog />} />
+        <Route path="catalog" element={<AppErrorBoundary page="MedicineMasterCatalog"><MedicineMasterCatalog /></AppErrorBoundary>} />
         <Route path="analytics" element={<SupplyChainAnalytics />} />
         <Route path="logistics" element={<LogisticsManagement />} />
         <Route path="manufacturers" element={<ManufacturerManagement />} />
