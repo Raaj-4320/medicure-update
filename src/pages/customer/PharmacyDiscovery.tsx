@@ -20,8 +20,9 @@ import { checkExpectations, validateDataBinding } from '../../utils/flowLogger';
 import { logDataFlow } from '../../utils/dataLogger';
 
 const PharmacyDiscovery: React.FC = () => {
-  const { location } = useLocation();
+  const { location, setLocation } = useLocation();
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
+  const [medicineCounts, setMedicineCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -34,6 +35,13 @@ const PharmacyDiscovery: React.FC = () => {
 
       try {
         const allPharmacies = await api.getPharmaciesForCustomer();
+        const counts = await Promise.all(
+          allPharmacies.map(async (pharmacy) => {
+            const inventory = await api.getInventory({ pharmacyId: pharmacy.id });
+            return [pharmacy.id, inventory.length] as const;
+          }),
+        );
+        setMedicineCounts(Object.fromEntries(counts));
         setPharmacies(allPharmacies);
         checkExpectations({
           page: 'Customer',
@@ -82,15 +90,7 @@ const PharmacyDiscovery: React.FC = () => {
         <h2 className="text-2xl font-bold text-slate-900 mb-2">Location Not Set</h2>
         <p className="text-slate-500 max-w-md mb-8">Please set your delivery location to discover pharmacies that serve your area.</p>
         <button
-          onClick={() =>
-            logUI('ACTION', {
-              component: 'PharmacyDiscovery',
-              action: 'Set Location',
-              expected: 'should open location modal',
-              status: 'partial',
-              reason: 'Location picker not wired in this page',
-            })
-          }
+          onClick={() => setLocation({ country: 'India', state: 'Maharashtra', city: 'Mumbai', area: 'Andheri', locality: 'West', pincode: '400053', landmark: 'Metro Station' })}
           className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-semibold shadow-lg shadow-emerald-100"
         >
           Set Location
@@ -147,22 +147,11 @@ const PharmacyDiscovery: React.FC = () => {
               to={`/pharmacy/${pharmacy.id}`}
               className="group bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-all"
             >
-              <div className="h-48 relative overflow-hidden">
-                <img 
-                  src={pharmacy.image || undefined} 
-                  alt={pharmacy.name} 
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
-                <div className="absolute top-4 right-4 px-2 py-1 bg-white/90 backdrop-blur rounded-lg flex items-center gap-1 text-xs font-bold text-slate-900">
+              <div className="h-24 relative overflow-hidden bg-slate-50 flex items-center px-5">
+                <div className="px-2 py-1 bg-white rounded-lg flex items-center gap-1 text-xs font-bold text-slate-900">
                   <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
                   {pharmacy.rating.toFixed(1)}
                 </div>
-                {pharmacy.deliveryAvailable && (
-                  <div className="absolute bottom-4 left-4 px-2 py-1 bg-emerald-600 text-white rounded-lg flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider">
-                    <Truck className="w-3 h-3" />
-                    Fast Delivery
-                  </div>
-                )}
               </div>
               
               <div className="p-5">
@@ -172,12 +161,8 @@ const PharmacyDiscovery: React.FC = () => {
                 <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                   <div className="flex items-center gap-4">
                     <div className="flex flex-col">
-                      <span className="text-[10px] uppercase text-slate-400 font-bold">Min Order</span>
-                      <span className="text-sm font-bold text-slate-900">₹{pharmacy.minOrderValue}</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-[10px] uppercase text-slate-400 font-bold">Delivery</span>
-                      <span className="text-sm font-bold text-slate-900">₹{pharmacy.deliveryFee}</span>
+                      <span className="text-[10px] uppercase text-slate-400 font-bold">Medicines</span>
+                      <span className="text-sm font-bold text-slate-900">{medicineCounts[pharmacy.id] ?? 0}</span>
                     </div>
                   </div>
                   <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-all">

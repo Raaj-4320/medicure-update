@@ -12,8 +12,8 @@ import {
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
-import { logFlow } from '../../utils/flowLogger';
-import { logUI } from '../../utils/uiLogger';
+import { appLogger } from '../../utils/observability';
+import OrderDetailsModal from '../../components/OrderDetailsModal';
 
 export default function SellerOrders() {
   const { profile } = useAuth();
@@ -22,48 +22,86 @@ export default function SellerOrders() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [hasPharmacy, setHasPharmacy] = useState(true);
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
 
   const fetchOrders = async () => {
     try {
-      logFlow('SELLER_ORDERS_FETCH_START', {
-        expected: ['pharmacy lookup by ownerId', 'orders by pharmacyId'],
-        received: { ownerId: profile?.uid || null },
-        success: true,
+      appLogger.log({
+        category: 'AUTH_PROFILE_PHARMACY',
+        event: 'seller_pharmacy_resolution_started',
+        status: 'start',
+        page: 'SellerOrders',
+        route: '/seller/orders',
+        message: 'Resolving seller pharmacy mapping.',
+        ids: { sellerId: profile?.uid },
       });
       const pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
       const myPharmacy = pharmacies[0];
       if (!myPharmacy) {
         setHasPharmacy(false);
         setOrders([]);
-        logFlow('SELLER_ORDERS_FETCH', {
-          expected: ['pharmacy for seller'],
-          received: { ownerId: profile?.uid || null, hasPharmacy: false },
-          success: false,
+        appLogger.log({
+          category: 'AUTH_PROFILE_PHARMACY',
+          event: 'seller_pharmacy_resolution_failure',
+          status: 'warning',
+          page: 'SellerOrders',
+          message: 'No pharmacy mapping found for seller.',
+          ids: { sellerId: profile?.uid },
         });
         return;
       }
+      appLogger.log({
+        category: 'AUTH_PROFILE_PHARMACY',
+        event: 'seller_pharmacy_resolution_success',
+        status: 'success',
+        page: 'SellerOrders',
+        message: 'Seller pharmacy mapping resolved.',
+        ids: { sellerId: profile?.uid, pharmacyId: myPharmacy.id },
+      });
       setHasPharmacy(true);
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'seller_get_orders_started',
+        status: 'start',
+        page: 'SellerOrders',
+        message: 'Seller orders query started.',
+        ids: { pharmacyId: myPharmacy.id },
+      });
       const data = await api.getOrders({ pharmacyId: myPharmacy.id });
       setOrders(data.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      logFlow('SELLER_ORDERS_FETCH', {
-        expected: ['orders for pharmacyId'],
-        received: { pharmacyId: myPharmacy.id, count: data.length },
-        success: true,
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'seller_get_orders_success',
+        status: 'success',
+        page: 'SellerOrders',
+        message: 'Seller orders query succeeded.',
+        ids: { pharmacyId: myPharmacy.id },
+        meta: { resultCount: data.length },
       });
     } catch (error) {
-      logFlow('SELLER_ORDERS_FETCH', {
-        expected: ['orders for pharmacyId'],
-        received: null,
-        success: false,
-        error,
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'seller_get_orders_failure',
+        status: 'failure',
+        page: 'SellerOrders',
+        message: 'Seller orders query failed.',
+        ids: { sellerId: profile?.uid },
+        error: appLogger.errorSummary(error),
       });
-      console.error('Failed to fetch orders:', error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'seller_orders_page_loaded',
+      status: 'start',
+      page: 'SellerOrders',
+      route: '/seller/orders',
+      message: 'Seller orders page mounted.',
+    });
     let unsubscribe: (() => void) | null = null;
     const init = async () => {
       await fetchOrders();
@@ -77,7 +115,7 @@ export default function SellerOrders() {
     };
     init();
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [profile]);
 
@@ -85,17 +123,55 @@ export default function SellerOrders() {
     setUpdatingId(orderId);
     setErrorMessage('');
     try {
-      logUI('ORDER_STATUS_UPDATE', { context: `Seller ${newStatus} for ${orderId}`, success: true });
+      appLogger.log({
+        category: 'UI_ACTION',
+        event: 'seller_order_status_click',
+        status: 'start',
+        page: 'SellerOrders',
+        message: 'Seller clicked order status update.',
+        ids: { orderId },
+        meta: { newStatus },
+      });
       await api.updateOrder(orderId, { status: newStatus });
       await fetchOrders();
     } catch (error: any) {
       setErrorMessage(error?.message || 'Failed to update order status');
-      logUI('ORDER_STATUS_UPDATE', { context: `Seller ${newStatus} for ${orderId}`, success: false, reason: error?.message || 'Update failed' });
-      console.error('Failed to update order status:', error);
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'seller_order_status_update_failure',
+        status: 'failure',
+        page: 'SellerOrders',
+        message: 'Seller order status update failed.',
+        ids: { orderId },
+        meta: { newStatus },
+        error: appLogger.errorSummary(error),
+      });
     } finally {
       setUpdatingId(null);
     }
   };
+
+  useEffect(() => {
+    if (!loading) {
+      appLogger.log({
+        category: 'ORDER_FLOW',
+        event: 'seller_orders_render_ready',
+        status: 'success',
+        page: 'SellerOrders',
+        message: 'Seller orders render state ready.',
+        meta: { visibleOrderCount: orders.length, hasPharmacy },
+      });
+      if (hasPharmacy && orders.length === 0) {
+        appLogger.log({
+          category: 'SYSTEM_WARNING',
+          event: 'seller_orders_empty_for_pharmacy',
+          status: 'warning',
+          page: 'SellerOrders',
+          message: 'No orders found for resolved pharmacy.',
+        });
+      }
+    }
+  }, [loading, orders.length, hasPharmacy]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -204,6 +280,12 @@ export default function SellerOrders() {
                         Dispatch Order
                       </button>
                     )}
+                    <button
+                      onClick={() => setSelectedOrder(order)}
+                      className="px-4 py-2 bg-slate-900 text-white text-sm font-bold rounded-xl hover:bg-slate-800 transition-all"
+                    >
+                      View Details
+                    </button>
                   </div>
                 </div>
 
@@ -211,7 +293,7 @@ export default function SellerOrders() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Items</h4>
                     <div className="space-y-2">
-                      {order.items.map((item: any, idx: number) => (
+                      {(Array.isArray(order.items) ? order.items : []).map((item: any, idx: number) => (
                         <div key={idx} className="flex justify-between text-sm">
                           <span className="text-slate-600">Medicine ID: {item.medicineId} x {item.quantity}</span>
                           <span className="font-bold text-slate-900">₹{(item.price * item.quantity).toFixed(2)}</span>
@@ -253,6 +335,13 @@ export default function SellerOrders() {
           ))}
         </div>
       )}
+
+      <OrderDetailsModal
+        isOpen={Boolean(selectedOrder)}
+        order={selectedOrder}
+        onClose={() => setSelectedOrder(null)}
+        title="Seller Order Details"
+      />
     </div>
   );
 }

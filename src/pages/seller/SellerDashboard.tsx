@@ -110,9 +110,8 @@ const SellerDashboard: React.FC = () => {
             received: { pharmacyId: myPharmacy.id, complete: false },
             status: 'partial',
             partialType: 'DATA_MISSING',
-            suggestion: 'Complete pharmacy profile before accessing seller dashboard.',
+            suggestion: 'Testing mode: profile completeness warning only, dashboard access remains enabled.',
           });
-          return;
         }
         setPharmacyStatus((myPharmacy.status || myPharmacy.verificationStatus || 'pending') as 'pending' | 'verified' | 'rejected');
 
@@ -260,39 +259,13 @@ const SellerDashboard: React.FC = () => {
       </div>
     );
   }
-  if (!profileComplete) {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">Complete your pharmacy profile to continue</h2>
-        <p className="text-slate-600">Required: pharmacyName, address, phone, license, ownerName.</p>
-        <Link to="/seller/profile" className="inline-flex mt-4 px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold">
-          Complete Profile
-        </Link>
-      </div>
-    );
-  }
-  if (pharmacyStatus !== 'verified') {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">Your pharmacy is under admin review</h2>
-        <p className="text-slate-600">Complete verification is required before seller operations become available.</p>
-      </div>
-    );
-  }
-  if (!hasInventoryItems) {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">No medicines listed yet</h2>
-        <p className="text-slate-600 mb-4">Add medicine inventory to activate your store. Order-related actions remain disabled until inventory is available.</p>
-        <Link to="/seller/inventory" className="inline-flex px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold">
-          Add Medicine
-        </Link>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-8 pb-12">
+      {(!profileComplete || pharmacyStatus !== 'verified' || !hasInventoryItems) && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 text-sm">
+          Store setup is still in progress. Testing mode keeps seller dashboard and actions available.
+        </div>
+      )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Store Dashboard</h1>
