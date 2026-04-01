@@ -40,7 +40,10 @@ const SellerPayouts: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-      if (!profile) return;
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
         const data = await api.getPayouts({ ownerId: profile.uid });

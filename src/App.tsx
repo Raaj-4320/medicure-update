@@ -6,6 +6,7 @@ import { ensureSeedData } from './utils/ensureSeedData';
 
 // Layouts
 import MainLayout from './components/layout/MainLayout';
+import { logUI } from './utils/uiLogger';
 
 // Pages
 import LandingPage from './pages/public/LandingPage';
@@ -28,10 +29,7 @@ import PharmacyProfile from './pages/seller/PharmacyProfile';
 import PrescriptionManagement from './pages/seller/PrescriptionManagement';
 import SellerCatalog from './pages/seller/SellerCatalog';
 import ReturnsReplacements from './pages/seller/ReturnsReplacements';
-import SellerPayouts from './pages/seller/SellerPayouts';
 import SellerAnalytics from './pages/seller/SellerAnalytics';
-import Compliance from './pages/seller/Compliance';
-import Support from './pages/seller/Support';
 import SellerNotifications from './pages/seller/SellerNotifications';
 
 // Admin Pages
@@ -45,7 +43,6 @@ import ManufacturerManagement from './pages/admin/ManufacturerManagement';
 import ComplianceRisk from './pages/admin/ComplianceRisk';
 import SafetyControl from './pages/admin/SafetyControl';
 import Financials from './pages/admin/Financials';
-import AdvancedLogistics from './pages/admin/AdvancedLogistics';
 import PrescriptionVerification from './pages/admin/PrescriptionVerification';
 
 // Delivery Pages
@@ -86,10 +83,41 @@ const ProtectedRoute: React.FC<{
 const AppRoutes = () => {
   const { profile } = useAuth();
   useLocation();
+  const [hasFatalRouteError, setHasFatalRouteError] = React.useState(false);
 
   useEffect(() => {
     ensureSeedData();
   }, []);
+
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      if (!event.message) return;
+      setHasFatalRouteError(true);
+      logUI('ROUTE_CRASH', {
+        component: 'AppRoutes',
+        action: 'Unhandled runtime error',
+        expected: 'route should render without crash',
+        success: false,
+        reason: event.message,
+      });
+    };
+    window.addEventListener('error', onError);
+    return () => window.removeEventListener('error', onError);
+  }, []);
+
+  if (hasFatalRouteError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div className="bg-white border border-red-200 rounded-2xl p-8 text-center max-w-md">
+          <h2 className="text-lg font-bold text-slate-900 mb-2">This section hit an unexpected error.</h2>
+          <p className="text-slate-600 mb-4">Please refresh or go back.</p>
+          <button onClick={() => { setHasFatalRouteError(false); window.location.reload(); }} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold">
+            Refresh
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const getDashboardRedirect = () => {
     if (!profile) return <LandingPage />;
@@ -142,10 +170,7 @@ const AppRoutes = () => {
         <Route path="prescriptions" element={<PrescriptionManagement />} />
         <Route path="catalog" element={<SellerCatalog />} />
         <Route path="returns" element={<ReturnsReplacements />} />
-        <Route path="payouts" element={<SellerPayouts />} />
         <Route path="analytics" element={<SellerAnalytics />} />
-        <Route path="compliance" element={<Compliance />} />
-        <Route path="support" element={<Support />} />
         <Route path="notifications" element={<SellerNotifications />} />
       </Route>
 
@@ -168,7 +193,6 @@ const AppRoutes = () => {
         <Route path="compliance" element={<ComplianceRisk />} />
         <Route path="safety" element={<SafetyControl />} />
         <Route path="financials" element={<Financials />} />
-        <Route path="advanced-logistics" element={<AdvancedLogistics />} />
         <Route path="prescriptions" element={<PrescriptionVerification />} />
       </Route>
 
