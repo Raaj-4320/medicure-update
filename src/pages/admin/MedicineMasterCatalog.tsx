@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle, Loader2, Plus, Search, XCircle } from 'lucide-react';
+import { CheckCircle, Edit2, Loader2, Plus, Search, Trash2, XCircle } from 'lucide-react';
 import { api } from '../../services/api';
 import AddMedicineModal, { AddMedicineValues } from '../../components/medicine/AddMedicineModal';
-import { logUI } from '../../utils/uiLogger';
-import { checkExpectations, validateDataBinding } from '../../utils/flowLogger';
-import { logDataFlow } from '../../utils/dataLogger';
+import { appLogger } from '../../utils/observability';
 
 const MedicineMasterCatalog: React.FC = () => {
   const [medicines, setMedicines] = useState<any[]>([]);
@@ -18,41 +16,53 @@ const MedicineMasterCatalog: React.FC = () => {
     setLoading(true);
     setError('');
     try {
+      appLogger.log({
+        category: 'PRODUCT_MUTATION',
+        event: 'admin_catalog_refresh_started',
+        status: 'start',
+        page: 'MedicineMasterCatalog',
+        route: '/admin/catalog',
+        message: 'Admin medicine master refresh started.',
+      });
       const data = await api.getMedicines({ includeAll: 'true' });
       setMedicines(data);
-      checkExpectations({
-        page: 'AdminCatalog',
-        expected: ['medicine_master'],
-        result: { medicine_master: data },
-      });
-      logDataFlow('ADMIN_MEDICINE_MASTER', {
-        source: 'FIRESTORE',
-        requested: ['medicine_master'],
-        received: data,
-        rendered: data.length > 0,
-        placeholder: data.length === 0,
-        requiredFields: ['id', 'brandName'],
-        route: '/admin/medicine-master',
-        filters: { includeAll: true, search: search || '' },
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'admin_catalog_refresh_success',
+        status: 'success',
+        page: 'MedicineMasterCatalog',
+        message: 'Admin medicine master refresh succeeded.',
+        meta: { resultCount: data.length, search: search || '' },
       });
     } catch (err: any) {
       setError(err?.message || 'Failed to load medicines');
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'admin_catalog_refresh_failure',
+        status: 'failure',
+        page: 'MedicineMasterCatalog',
+        message: 'Admin medicine master refresh failed.',
+        error: appLogger.errorSummary(err),
+      });
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    appLogger.log({
+      category: 'PAGE_LOAD_ROUTE',
+      event: 'admin_catalog_page_entered',
+      status: 'start',
+      page: 'MedicineMasterCatalog',
+      route: '/admin/catalog',
+      message: 'Admin medicine master page mounted.',
+    });
     loadMedicines();
   }, []);
 
   const createMedicine = async (values: AddMedicineValues) => {
-    logUI('ACTION', {
-      component: 'AdminCatalog',
-      action: 'Add Medicine',
-      expected: 'should create medicine master entry',
-      status: 'working',
-    });
+    appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_add_clicked', status: 'start', page: 'MedicineMasterCatalog', message: 'Admin clicked add medicine.' });
     await api.createMedicine({
       brandName: values.name,
       genericName: values.genericName,
@@ -66,29 +76,84 @@ const MedicineMasterCatalog: React.FC = () => {
       schedule: 'None',
     });
     await loadMedicines();
+    appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_add_success', status: 'success', page: 'MedicineMasterCatalog', message: 'Admin medicine created successfully.' });
   };
 
   const updateStatus = async (id: string, status: 'approved' | 'rejected') => {
     setUpdatingId(id);
     setError('');
     try {
-      logUI('ACTION', {
-        component: 'AdminCatalog',
-        action: status === 'approved' ? 'Approve Medicine' : 'Reject Medicine',
-        expected: 'should call API + update UI',
-        status: 'working',
-      });
-      await api.updateMedicine(id, { status });
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_status_clicked', status: 'start', page: 'MedicineMasterCatalog', message: 'Admin clicked medicine status update.', ids: { productId: id }, meta: { status } });
+      const updated = await api.updateMedicine(id, { status });
+      if (!updated) {
+        throw new Error('Medicine status update was not persisted.');
+      }
       await loadMedicines();
     } catch (err: any) {
       setError(err?.message || 'Failed to update medicine status');
-      logUI('ACTION', {
-        component: 'AdminCatalog',
-        action: status === 'approved' ? 'Approve Medicine' : 'Reject Medicine',
-        expected: 'should call API + update UI',
-        status: 'not_working',
-        reason: err?.message || 'status update failed',
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_status_failure', status: 'failure', page: 'MedicineMasterCatalog', message: 'Admin medicine status update failed.', ids: { productId: id }, meta: { status }, error: appLogger.errorSummary(err) });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const editMedicine = async (medicine: any) => {
+    const brandName = window.prompt('Medicine name', medicine.name || medicine.brandName || '') || medicine.name || medicine.brandName;
+    const genericName = window.prompt('Generic name', medicine.genericName || '') || medicine.genericName;
+    const category = window.prompt('Category', medicine.category || '') || medicine.category;
+    const dosageForm = window.prompt('Dosage form', medicine.dosageForm || '') || medicine.dosageForm;
+    const strength = window.prompt('Strength', medicine.strength || '') || medicine.strength;
+    const manufacturer = window.prompt('Manufacturer', medicine.manufacturer || '') || medicine.manufacturer;
+    const description = window.prompt('Description', medicine.description || '') || medicine.description;
+    const priceInput = window.prompt('Price', String(medicine.price ?? ''));
+    const price = priceInput === null || priceInput === '' ? medicine.price : Number(priceInput);
+    if (priceInput !== null && priceInput !== '' && !Number.isFinite(price)) {
+      setError('Price must be a valid number.');
+      return;
+    }
+    setUpdatingId(medicine.id);
+    setError('');
+    try {
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_edit_clicked', status: 'start', page: 'MedicineMasterCatalog', message: 'Admin clicked medicine edit.', ids: { productId: medicine.id } });
+      const updated = await api.updateMedicine(medicine.id, {
+        name: brandName,
+        brandName,
+        genericName,
+        category,
+        dosageForm,
+        strength,
+        manufacturer,
+        description,
+        price,
       });
+      if (!updated) {
+        throw new Error('Medicine update was not persisted.');
+      }
+      await loadMedicines();
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_edit_success', status: 'success', page: 'MedicineMasterCatalog', message: 'Admin medicine updated.', ids: { productId: medicine.id } });
+    } catch (err: any) {
+      setError(err?.message || 'Failed to edit medicine');
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_edit_failure', status: 'failure', page: 'MedicineMasterCatalog', message: 'Admin medicine edit failed.', ids: { productId: medicine.id }, error: appLogger.errorSummary(err) });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const deleteMedicine = async (medicineId: string) => {
+    if (!window.confirm('Delete this medicine from catalog?')) return;
+    setUpdatingId(medicineId);
+    setError('');
+    try {
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_delete_clicked', status: 'start', page: 'MedicineMasterCatalog', message: 'Admin clicked medicine delete.', ids: { productId: medicineId } });
+      const deleted = await api.deleteMedicine(medicineId);
+      if (!deleted) {
+        throw new Error('Medicine delete was not persisted.');
+      }
+      await loadMedicines();
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_delete_success', status: 'success', page: 'MedicineMasterCatalog', message: 'Admin medicine deleted.', ids: { productId: medicineId } });
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete medicine');
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'admin_catalog_delete_failure', status: 'failure', page: 'MedicineMasterCatalog', message: 'Admin medicine delete failed.', ids: { productId: medicineId }, error: appLogger.errorSummary(err) });
     } finally {
       setUpdatingId(null);
     }
@@ -97,14 +162,8 @@ const MedicineMasterCatalog: React.FC = () => {
   const filtered = medicines.filter((m) =>
     `${m.name || m.brandName || ''} ${m.genericName || ''}`.toLowerCase().includes(search.toLowerCase())
   );
-  if (search.trim() === '') {
-    validateDataBinding({
-      area: 'AdminCatalog',
-      dataCount: medicines.length,
-      renderedCount: filtered.length,
-      expectedKeys: ['id', 'brandName', 'genericName'],
-      sample: medicines[0],
-    });
+  if (search.trim() === '' && medicines.length > 0 && filtered.length === 0) {
+    appLogger.log({ category: 'SYSTEM_WARNING', event: 'admin_catalog_render_binding_warning', status: 'warning', page: 'MedicineMasterCatalog', message: 'Catalog contains data but filtered render is empty unexpectedly.', meta: { medicines: medicines.length, filtered: filtered.length } });
   }
 
   return (
@@ -158,6 +217,8 @@ const MedicineMasterCatalog: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <button disabled={updatingId === med.id || med.status === 'approved'} onClick={() => updateStatus(med.id, 'approved')} className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"><CheckCircle className="w-4 h-4" /></button>
                       <button disabled={updatingId === med.id || med.status === 'rejected'} onClick={() => updateStatus(med.id, 'rejected')} className="p-2 rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"><XCircle className="w-4 h-4" /></button>
+                      <button disabled={updatingId === med.id} onClick={() => editMedicine(med)} className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"><Edit2 className="w-4 h-4" /></button>
+                      <button disabled={updatingId === med.id} onClick={() => deleteMedicine(med.id)} className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </td>
                 </tr>
