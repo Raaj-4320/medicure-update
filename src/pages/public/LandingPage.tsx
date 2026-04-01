@@ -96,7 +96,7 @@ const LandingPage: React.FC = () => {
           <div className="relative">
             <div className="relative z-10 rounded-[40px] overflow-hidden shadow-2xl border-8 border-white">
               <img 
-                src="https://picsum.photos/seed/pharmacy-hero/800/1000" 
+                src="https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&w=1200&q=80" 
                 alt="Pharmacy" 
                 className="w-full h-full object-cover aspect-[4/5]"
               />
