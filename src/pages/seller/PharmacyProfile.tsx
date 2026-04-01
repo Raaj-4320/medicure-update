@@ -27,7 +27,6 @@ import { Pharmacy } from '../../types';
 const PharmacyProfile: React.FC = () => {
   const { profile } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'general' | 'license' | 'bank' | 'settings'>('general');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -175,13 +174,6 @@ const PharmacyProfile: React.FC = () => {
   const headerLocation = formData.addressLine.split(',')[1]?.trim() || formData.addressLine || 'Address not set';
   const totalOrders = 0;
 
-  const tabs = [
-    { id: 'general', label: 'General Info', icon: Building2 },
-    { id: 'license', label: 'Compliance & Licenses', icon: ShieldCheck },
-    { id: 'bank', label: 'Bank & Payouts', icon: CreditCard },
-    { id: 'settings', label: 'Store Settings', icon: FileText },
-  ];
-
   return (
     <div className="space-y-8 pb-12">
       {loading && <div className="text-sm text-slate-500">Loading profile...</div>}
@@ -244,24 +236,16 @@ const PharmacyProfile: React.FC = () => {
       </div>
 
       <div className="mt-20 grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Tabs */}
-        <div className="lg:col-span-1 space-y-2">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`w-full flex items-center gap-3 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === tab.id ? 'bg-slate-900 text-white shadow-xl shadow-slate-200' : 'text-slate-500 hover:bg-slate-100'}`}
-            >
-              <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? 'text-emerald-400' : 'text-slate-400'}`} />
-              {tab.label}
-            </button>
-          ))}
+        <div className="lg:col-span-1">
+          <div className="w-full flex items-center gap-3 px-6 py-4 rounded-2xl text-sm font-bold bg-slate-900 text-white shadow-xl shadow-slate-200">
+            <Building2 className="w-5 h-5 text-emerald-400" />
+            General Info
+          </div>
         </div>
 
         {/* Content Area */}
         <div className="lg:col-span-3 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm min-h-[500px]">
           <AnimatePresence mode="wait">
-            {activeTab === 'general' && (
               <motion.div
                 key="general"
                 initial={{ opacity: 0, x: 20 }}
@@ -393,154 +377,11 @@ const PharmacyProfile: React.FC = () => {
                   </div>
                 </div>
               </motion.div>
-            )}
-
-            {activeTab === 'license' && (
-              <motion.div
-                key="license"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="space-y-8"
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-slate-900">Regulatory Documents</h3>
-                  <button className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-all">
-                    <Plus className="w-4 h-4" />
-                    Upload New
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="p-6 bg-white border border-slate-200 rounded-2xl space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                        <ShieldCheck className="w-6 h-6" />
-                      </div>
-                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-md">Verified</span>
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-slate-900">Drug License (Form 20/21)</h4>
-                      {isEditing ? (
-                        <input type="text" value={formData.licenseNumber} onChange={(e) => handleInputChange('licenseNumber', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
-                      ) : (
-                        <p className="text-xs text-slate-500 mt-1">License No: {formData.licenseNumber}</p>
-                      )}
-                    </div>
-                    <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">Expires: 31 Dec 2025</span>
-                      <button className="text-xs font-bold text-emerald-600 hover:underline">View Doc</button>
-                    </div>
-                  </div>
-
-                  <div className="p-6 bg-white border border-slate-200 rounded-2xl space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                        <FileText className="w-6 h-6" />
-                      </div>
-                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-md">Verified</span>
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-slate-900">GST Registration</h4>
-                      <p className="text-xs text-slate-500 mt-1">GSTIN: Not provided</p>
-                    </div>
-                    <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">Status: Active</span>
-                      <button className="text-xs font-bold text-emerald-600 hover:underline">View Doc</button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">
-                  <AlertCircle className="w-6 h-6 text-amber-600 shrink-0" />
-                  <div>
-                    <h4 className="text-sm font-bold text-amber-900">License Renewal Alert</h4>
-                    <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                      Your Drug License is expiring in 9 months. Please ensure you start the renewal process at least 3 months in advance to avoid platform suspension.
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {activeTab === 'bank' && (
-              <motion.div
-                key="bank"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="space-y-8"
-              >
-                <h3 className="text-lg font-bold text-slate-900">Settlement Bank Account</h3>
-                <div className="p-8 bg-slate-900 rounded-3xl text-white relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 p-12 opacity-10 group-hover:scale-110 transition-transform">
-                    <CreditCard className="w-48 h-48" />
-                  </div>
-                  <div className="relative z-10 space-y-8">
-                    <div className="flex items-center justify-between">
-                      <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center p-2">
-                        <img src="https://upload.wikimedia.org/wikipedia/commons/c/cc/SBI-logo.svg" alt="SBI" className="w-full h-full object-contain" />
-                      </div>
-                      <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-bold rounded-full border border-emerald-500/30">
-                        Primary Account
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-widest">Account Number</p>
-                      <h4 className="text-2xl font-bold tracking-widest">**** **** 1234</h4>
-                    </div>
-                    <div className="grid grid-cols-2 gap-8">
-                      <div>
-                        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Account Holder</p>
-                        <p className="text-sm font-bold">Primary settlement account</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">IFSC Code</p>
-                        <p className="text-sm font-bold">Configured</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-4">Payout Schedule</h4>
-                    <div className="flex items-center gap-4">
-                      <div className="p-3 bg-white rounded-xl shadow-sm">
-                        <Clock className="w-6 h-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">Weekly Settlements</p>
-                        <p className="text-xs text-slate-500">Every Monday</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-4">Minimum Payout</h4>
-                    <div className="flex items-center gap-4">
-                      <div className="p-3 bg-white rounded-xl shadow-sm">
-                        <DollarSign className="w-6 h-6 text-emerald-600" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">₹1,000.00</p>
-                        <p className="text-xs text-slate-500">Threshold for auto-transfer</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
           </AnimatePresence>
         </div>
       </div>
     </div>
   );
 };
-
-const DollarSign = ({ className }: { className?: string }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
 
 export default PharmacyProfile;

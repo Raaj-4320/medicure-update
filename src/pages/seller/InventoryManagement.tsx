@@ -12,8 +12,7 @@ import {
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
 import { MedicineMaster, SellerMedicine } from '../../types';
-import { logFlow } from '../../utils/flowLogger';
-import { logUI } from '../../utils/uiLogger';
+import { appLogger } from '../../utils/observability';
 
 const InventoryManagement: React.FC = () => {
   const { profile } = useAuth();
@@ -33,6 +32,15 @@ const InventoryManagement: React.FC = () => {
     if (!profile) return;
     try {
       setLoading(true);
+      appLogger.log({
+        category: 'PAGE_LOAD_ROUTE',
+        event: 'seller_inventory_load_started',
+        status: 'start',
+        page: 'InventoryManagement',
+        route: '/seller/inventory',
+        message: 'Seller inventory load started.',
+        ids: { sellerId: profile.uid },
+      });
       const pharmacies = await api.getPharmacies({ ownerId: profile.uid });
       if (pharmacies.length === 0) {
         setErrorMessage('No pharmacy found for this seller account.');
@@ -49,10 +57,13 @@ const InventoryManagement: React.FC = () => {
 
       const enriched = await Promise.all(inventory.map(async (item: any) => {
         if (!item.medicineMasterId) {
-          logFlow('INVENTORY_JOIN', {
-            expected: ['medicineMasterId'],
-            received: { itemId: item.id, medicineMasterId: item.medicineMasterId },
-            success: false,
+          appLogger.log({
+            category: 'SYSTEM_WARNING',
+            event: 'inventory_item_missing_master_id',
+            status: 'warning',
+            page: 'InventoryManagement',
+            message: 'Inventory item missing medicineMasterId.',
+            ids: { productId: item.id, pharmacyId: pId },
           });
         }
         const masterData = item.medicineMasterId
@@ -60,10 +71,13 @@ const InventoryManagement: React.FC = () => {
           : [];
         const resolvedMasterData = Array.isArray(masterData) ? masterData[0] : masterData;
         if (!resolvedMasterData) {
-          logFlow('INVENTORY_JOIN', {
-            expected: ['master data by medicineMasterId'],
-            received: { itemId: item.id, medicineMasterId: item.medicineMasterId },
-            success: false,
+          appLogger.log({
+            category: 'SYSTEM_WARNING',
+            event: 'inventory_master_join_missing',
+            status: 'warning',
+            page: 'InventoryManagement',
+            message: 'Master record missing for inventory item.',
+            ids: { productId: item.id, pharmacyId: pId },
           });
         }
         return {
@@ -73,17 +87,24 @@ const InventoryManagement: React.FC = () => {
       }));
 
       setMedicines(enriched);
-      logFlow('INVENTORY_FETCH', {
-        expected: ['pharmacy', 'inventory', 'medicine master'],
-        received: { inventoryCount: enriched.length },
-        success: true,
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'seller_inventory_load_success',
+        status: 'success',
+        page: 'InventoryManagement',
+        message: 'Seller inventory loaded.',
+        ids: { pharmacyId: pId },
+        meta: { inventoryCount: enriched.length },
       });
     } catch (err: any) {
-      logFlow('INVENTORY_FETCH', {
-        expected: ['pharmacy', 'inventory', 'medicine master'],
-        received: null,
-        success: false,
-        error: err,
+      appLogger.log({
+        category: 'FIREBASE_QUERY',
+        event: 'seller_inventory_load_failure',
+        status: 'failure',
+        page: 'InventoryManagement',
+        message: 'Seller inventory load failed.',
+        ids: { sellerId: profile.uid },
+        error: appLogger.errorSummary(err),
       });
       setErrorMessage(err?.message || 'Error fetching inventory');
     } finally {
@@ -99,21 +120,13 @@ const InventoryManagement: React.FC = () => {
     if (!profile?.uid) throw new Error('Seller profile not found');
     if (!pharmacyId) throw new Error('No pharmacy found');
     if (!selectedMasterId) {
-      logFlow('CREATE_INVENTORY_FORM', {
-        expected: ['medicineMasterId'],
-        received: { medicineMasterId: selectedMasterId },
-        success: false,
-      });
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_create_validation_failed', status: 'warning', page: 'InventoryManagement', message: 'Medicine not selected.' });
       throw new Error('Please select a medicine from medicine master.');
     }
     const price = Number(newPrice);
     const stock = Number(newStock);
     if (!Number.isFinite(price) || !Number.isFinite(stock) || price <= 0 || stock < 0) {
-      logFlow('CREATE_INVENTORY_FORM', {
-        expected: ['price > 0', 'stock >= 0'],
-        received: { price, stock },
-        success: false,
-      });
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_create_validation_failed', status: 'warning', page: 'InventoryManagement', message: 'Invalid price/stock values.', meta: { price, stock } });
       throw new Error('Price must be > 0 and stock must be >= 0.');
     }
     await api.createInventoryEntry({
@@ -126,7 +139,7 @@ const InventoryManagement: React.FC = () => {
       isFeatured: false,
     });
     setSuccessMessage('Medicine submitted for admin approval.');
-    logUI('CREATE_INVENTORY', { context: `Inventory created for ${selectedMasterId}`, success: true });
+    appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_create_success', status: 'success', page: 'InventoryManagement', message: 'Inventory entry created.', ids: { productId: selectedMasterId, pharmacyId } });
     setSelectedMasterId('');
     setNewPrice('');
     setNewStock('');
@@ -137,24 +150,32 @@ const InventoryManagement: React.FC = () => {
     const stock = Number(window.prompt('Update stock', String(item.stock)) || item.stock);
     const price = Number(window.prompt('Update price', String(item.price)) || item.price);
     try {
-      logUI('EDIT_INVENTORY', { context: `Inventory ${item.id}`, success: true });
-      await api.updateInventory(item.id, { stock, price });
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_edit_clicked', status: 'start', page: 'InventoryManagement', message: 'Inventory edit clicked.', ids: { productId: item.id, pharmacyId } });
+      const updated = await api.updateInventory(item.id, { stock, price });
+      if (!updated) {
+        throw new Error('Inventory update was not persisted.');
+      }
       await fetchInventory();
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_edit_success', status: 'success', page: 'InventoryManagement', message: 'Inventory item updated.', ids: { productId: item.id, pharmacyId } });
     } catch (error) {
       setErrorMessage('Failed to update inventory item');
-      logUI('EDIT_INVENTORY', { context: `Inventory ${item.id}`, success: false, reason: (error as Error)?.message || 'update failed' });
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_edit_failure', status: 'failure', page: 'InventoryManagement', message: 'Inventory update failed.', ids: { productId: item.id, pharmacyId }, error: appLogger.errorSummary(error) });
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!window.confirm('Delete this inventory item?')) return;
     try {
-      logUI('DELETE_INVENTORY', { context: `Inventory ${id}`, success: true });
-      await api.deleteInventory(id);
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_delete_clicked', status: 'start', page: 'InventoryManagement', message: 'Inventory delete clicked.', ids: { productId: id, pharmacyId } });
+      const deleted = await api.deleteInventory(id);
+      if (!deleted) {
+        throw new Error('Inventory delete was not persisted.');
+      }
       await fetchInventory();
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_delete_success', status: 'success', page: 'InventoryManagement', message: 'Inventory item deleted.', ids: { productId: id, pharmacyId } });
     } catch (error) {
       setErrorMessage('Failed to delete inventory item');
-      logUI('DELETE_INVENTORY', { context: `Inventory ${id}`, success: false, reason: (error as Error)?.message || 'delete failed' });
+      appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_delete_failure', status: 'failure', page: 'InventoryManagement', message: 'Inventory delete failed.', ids: { productId: id, pharmacyId }, error: appLogger.errorSummary(error) });
     }
   };
 
@@ -192,7 +213,7 @@ const InventoryManagement: React.FC = () => {
                 await handleCreateInventory();
               } catch (error: any) {
                 setErrorMessage(error?.message || 'Failed to create inventory');
-                logUI('CREATE_INVENTORY', { context: 'Inventory submit', success: false, reason: error?.message || 'submit failed' });
+                appLogger.log({ category: 'PRODUCT_MUTATION', event: 'inventory_create_failure', status: 'failure', page: 'InventoryManagement', message: 'Inventory create failed.', error: appLogger.errorSummary(error) });
               } finally {
                 setSubmitting(false);
               }
