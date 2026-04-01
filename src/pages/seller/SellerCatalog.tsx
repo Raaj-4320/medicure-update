@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Pill } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
@@ -10,14 +10,20 @@ const SellerCatalog: React.FC = () => {
   const [inventory, setInventory] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [loading, setLoading] = useState(true);
 
   const loadData = async () => {
-    if (!profile?.uid) return;
+    if (!profile?.uid) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     const pharmacies = await api.getPharmacies({ ownerId: profile.uid });
     const pharmacy = pharmacies[0];
     if (!pharmacy) {
       setErrorMessage('No pharmacy found');
       setInventory([]);
+      setLoading(false);
       return;
     }
     setErrorMessage('');
@@ -46,6 +52,7 @@ const SellerCatalog: React.FC = () => {
       received: { inventoryCount: joinedInventory.length },
       success: true,
     });
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -54,10 +61,22 @@ const SellerCatalog: React.FC = () => {
       received: { mode: 'read_only' },
       success: true,
     });
-    loadData().catch((e) => setErrorMessage(e?.message || 'Failed to load catalog'));
+    loadData().catch((e) => {
+      setErrorMessage(e?.message || 'Failed to load catalog');
+      setLoading(false);
+    });
   }, [profile]);
 
-  const filtered = inventory.filter((item: any) => `${item.masterData?.brandName || ''} ${item.masterData?.genericName || ''}`.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filtered = inventory.filter((item: any) => `${item.masterData?.brandName || ''} ${item.masterData?.genericName || ''} ${item.masterData?.category || ''} ${item.masterData?.dosageForm || ''}`.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <Pill className="w-10 h-10 text-slate-300 mb-3" />
+        <p className="text-sm text-slate-500">Loading catalog...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -78,11 +97,18 @@ const SellerCatalog: React.FC = () => {
         </div>
       </div>
 
+      {filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center">
+          <Pill className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+          <h3 className="font-bold text-slate-900">No catalog items found</h3>
+          <p className="text-sm text-slate-500 mt-1">Add inventory items first or change your search.</p>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {filtered.map((item: any) => (
           <motion.div key={item.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
             <div className="relative h-40 bg-slate-50 p-4 flex items-center justify-center">
-              <img src={item.masterData?.image || undefined} alt={item.masterData?.brandName} className="max-h-full max-w-full object-contain" />
+              <img src={item.masterData?.image || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=400&q=80'} alt={item.masterData?.brandName || 'Medicine'} className="max-h-full max-w-full object-contain" />
               <div className="absolute top-3 right-3 px-2 py-1 text-[10px] font-bold rounded bg-white/90 text-slate-600">
                 READ ONLY
               </div>
@@ -90,12 +116,15 @@ const SellerCatalog: React.FC = () => {
             <div className="p-5 space-y-3">
               <h3 className="font-bold text-slate-900">{item.masterData?.brandName}</h3>
               <p className="text-xs text-slate-500 italic">{item.masterData?.genericName}</p>
-              <div className="flex items-center justify-between text-sm"><span>₹{item.price}</span><span>Stock: {item.stock}</span></div>
+              <div className="flex items-center justify-between text-sm"><span>₹{Number(item.price || 0).toFixed(2)}</span><span>Stock: {item.stock}</span></div>
+              <p className="text-[11px] text-slate-500">{item.masterData?.category || '-'} • {item.masterData?.dosageForm || '-'} {item.masterData?.strength || ''}</p>
+              <p className="text-[11px] text-slate-500">Rx: {item.masterData?.rxRequired ? 'Required' : 'Not required'} • {item.masterData?.manufacturer || 'N/A'}</p>
               <p className="text-[11px] text-slate-500">Manage listing actions from Inventory page.</p>
             </div>
           </motion.div>
         ))}
       </div>
+      )}
     </div>
   );
 };

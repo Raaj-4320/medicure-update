@@ -39,12 +39,15 @@ const DeliveryDashboard: React.FC = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!profile) return;
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
         const assignments = await api.getDeliveryAssignments();
         const myAssignments = assignments.filter((a: any) => a.deliveryStaffId === profile.uid);
-        const active = myAssignments.find((a: any) => a.status !== 'delivered');
+        const active = myAssignments.find((a: any) => !['delivered', 'completed', 'failed'].includes(a.status));
         setActiveAssignment(active);
 
         // Fetch available orders (dispatched by seller)
