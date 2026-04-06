@@ -29,7 +29,7 @@ interface AuthContextType {
     password: string,
     extraData?: { displayName?: string; role?: string; phoneNumber?: string }
   ) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<UserProfile['role']>;
   logout: () => Promise<void>;
 }
 
@@ -356,7 +356,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // ✅ LOGIN
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<UserProfile['role']> => {
     setLoading(true);
 
     try {
@@ -385,7 +385,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // 🔥 Prevent Firebase override
         localStorage.setItem('admin', 'true');
 
-        return;
+        return 'admin';
       }
 
       // ✅ NORMAL FIREBASE LOGIN
@@ -423,6 +423,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         received: { uid: firebaseUser.uid, role, pharmacyExists: manualCheck.exists() },
         success: role !== 'seller' || manualCheck.exists(),
       });
+      return (role as UserProfile['role']) || 'customer';
 
     } catch (error) {
       logFlow('AUTH_LOGIN', {

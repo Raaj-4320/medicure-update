@@ -32,10 +32,8 @@ setLoading(true);
 
 
 try {
-  await login(email, password);
-
-  // 🔥 role-based redirect
-  navigate(getRedirectPath(role));
+  const actualRole = await login(email, password);
+  navigate(getRedirectPath(actualRole || role));
 
 } catch (err: any) {
   setError(err?.message || 'Login failed');
