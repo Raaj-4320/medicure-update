@@ -57,7 +57,11 @@ const CartPage: React.FC = () => {
           {cartItems.map((item) => (
             <div key={item.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex gap-4">
               <div className="w-20 h-20 bg-slate-50 rounded-xl overflow-hidden flex-shrink-0 flex items-center justify-center">
-                <Package className="w-8 h-8 text-slate-300" />
+                {item.image ? (
+                  <img src={item.image} alt={item.brandName || item.name || 'Medicine'} className="w-full h-full object-cover" />
+                ) : (
+                  <Package className="w-8 h-8 text-slate-300" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between mb-1">
