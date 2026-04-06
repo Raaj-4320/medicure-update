@@ -14,7 +14,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { api } from '../../services/api';
-import { Pharmacy, SellerMedicine, MedicineMaster } from '../../types';
+import { Pharmacy, SellerMedicine } from '../../types';
 
 const PharmacyDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -36,19 +36,9 @@ const PharmacyDetail: React.FC = () => {
           setPharmacy(pData);
         }
 
-        // 2. Fetch Seller Medicines (Inventory)
-        const inventory = await api.getInventory({ pharmacyId: id });
-        
-        // 3. Fetch Master Data for each medicine
-        const enrichedMeds = await Promise.all(inventory.map(async (sm: any) => {
-          const mData = await api.getMedicines({ id: sm.medicineMasterId });
-          return { 
-            ...sm, 
-            masterData: Array.isArray(mData) ? mData[0] : mData 
-          };
-        }));
-
-        setMedicines(enrichedMeds);
+        // 2. Fetch seller-owned medicines directly
+        const sellerMedicines = await api.getInventory({ pharmacyId: id });
+        setMedicines(sellerMedicines);
       } catch (err) {
         console.error('Error fetching pharmacy details:', err);
       } finally {
@@ -60,8 +50,8 @@ const PharmacyDetail: React.FC = () => {
   }, [id]);
 
   const filteredMeds = medicines.filter(m => 
-    m.masterData?.brandName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.masterData?.genericName.toLowerCase().includes(searchQuery.toLowerCase())
+    (m.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (m.description || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const [cart, setCart] = useState<any[]>(() => {
@@ -70,6 +60,26 @@ const PharmacyDetail: React.FC = () => {
   });
 
   const addToCart = (med: SellerMedicine) => {
+    if (cart.length > 0 && cart[0]?.pharmacyId && cart[0].pharmacyId !== med.pharmacyId) {
+      const shouldReplace = window.confirm('Your cart contains items from another pharmacy. Replace cart with this pharmacy items?');
+      if (!shouldReplace) return;
+      const replacementCart = [{
+        id: med.id,
+        medicineId: med.id,
+        sellerMedicineId: med.id,
+        medicineName: med.name,
+        brandName: med.name,
+        price: med.discountPrice || med.price,
+        quantity: 1,
+        pharmacyId: med.pharmacyId,
+        sellerId: med.sellerId,
+        rxRequired: med.rxRequired,
+        image: med.image,
+      }];
+      setCart(replacementCart);
+      localStorage.setItem('cart', JSON.stringify(replacementCart));
+      return;
+    }
     const newCart = [...cart];
     const existingIndex = newCart.findIndex(item => item.id === med.id);
     
@@ -78,12 +88,16 @@ const PharmacyDetail: React.FC = () => {
     } else {
       newCart.push({
         id: med.id,
-        medicineId: med.medicineMasterId,
-        brandName: med.masterData?.brandName,
+        medicineId: med.id,
+        sellerMedicineId: med.id,
+        medicineName: med.name,
+        brandName: med.name,
         price: med.discountPrice || med.price,
         quantity: 1,
         pharmacyId: med.pharmacyId,
-        rxRequired: med.masterData?.rxRequired
+        sellerId: med.sellerId,
+        rxRequired: med.rxRequired,
+        image: med.image,
       });
     }
     
@@ -178,15 +192,15 @@ const PharmacyDetail: React.FC = () => {
           {filteredMeds.map((med) => (
             <div key={med.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex gap-4 hover:border-emerald-200 transition-all">
               <div className="w-24 h-24 bg-slate-50 rounded-xl overflow-hidden flex-shrink-0">
-                <img src={med.masterData?.image} alt="" className="w-full h-full object-cover" />
+                <img src={med.image || undefined} alt="" className="w-full h-full object-cover" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between mb-1">
                   <div>
-                    <h4 className="font-bold text-slate-900 truncate">{med.masterData?.brandName}</h4>
-                    <p className="text-xs text-slate-500 italic">{med.masterData?.genericName}</p>
+                    <h4 className="font-bold text-slate-900 truncate">{med.name}</h4>
+                    <p className="text-xs text-slate-500 italic">{med.description || '-'}</p>
                   </div>
-                  {med.masterData?.rxRequired && (
+                  {med.rxRequired && (
                     <span className="px-2 py-0.5 bg-red-50 text-red-600 text-[10px] font-bold rounded uppercase flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />
                       Rx
@@ -195,8 +209,7 @@ const PharmacyDetail: React.FC = () => {
                 </div>
                 
                 <div className="flex items-center gap-2 mb-3">
-                  <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">{med.masterData?.dosageForm}</span>
-                  <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">{med.masterData?.strength}</span>
+                  <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">{med.category || 'General'}</span>
                 </div>
 
                 <div className="flex items-center justify-between mt-auto">

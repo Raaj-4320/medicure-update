@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   MapPin, 
@@ -12,11 +12,15 @@ import {
   Activity
 } from 'lucide-react';
 import { useLocation, LocationState } from '../../LocationContext';
+import { api } from '../../services/api';
+import { SellerMedicine } from '../../types';
 
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const { setLocation } = useLocation();
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [marketItems, setMarketItems] = useState<SellerMedicine[]>([]);
+  const [marketLoading, setMarketLoading] = useState(true);
   
   const [tempLocation, setTempLocation] = useState<LocationState>({
     country: 'India',
@@ -32,6 +36,24 @@ const LandingPage: React.FC = () => {
     setLocation(tempLocation);
     navigate('/discover');
   };
+
+  useEffect(() => {
+    const loadMarketplace = async () => {
+      try {
+        setMarketLoading(true);
+        const inventory = await api.getInventory({});
+        const topItems = inventory
+          .filter((item) => item.isVisible !== false && item.stock > 0 && (item as any).isActive !== false)
+          .slice(0, 8);
+        setMarketItems(topItems);
+      } finally {
+        setMarketLoading(false);
+      }
+    };
+    loadMarketplace();
+  }, []);
+
+  const hasMarketItems = useMemo(() => marketItems.length > 0, [marketItems.length]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -131,6 +153,46 @@ const LandingPage: React.FC = () => {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="py-20 px-6 md:px-12">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h2 className="text-3xl font-bold text-slate-900">Marketplace Medicines</h2>
+              <p className="text-slate-500 mt-1">Live items listed by sellers.</p>
+            </div>
+            <Link to="/discover" className="text-emerald-600 font-semibold inline-flex items-center gap-2">
+              Explore stores <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+
+          {marketLoading ? (
+            <p className="text-slate-500">Loading marketplace…</p>
+          ) : !hasMarketItems ? (
+            <p className="text-slate-500">No seller medicines available yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {marketItems.map((item) => (
+                <div key={item.id} className="border border-slate-200 rounded-2xl p-4 bg-white">
+                  <div className="w-full aspect-square rounded-xl bg-slate-100 overflow-hidden mb-3">
+                    {item.image ? (
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">No image</div>
+                    )}
+                  </div>
+                  <h3 className="font-bold text-slate-900 line-clamp-1">{item.name || 'Medicine'}</h3>
+                  <p className="text-sm text-slate-500">{item.category || 'General'}</p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="font-bold text-emerald-700">₹{item.price}</span>
+                    <span className="text-xs text-slate-500">Stock: {item.stock}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

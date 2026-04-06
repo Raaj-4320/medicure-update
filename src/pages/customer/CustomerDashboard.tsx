@@ -14,13 +14,11 @@ import {
 import { useAuth } from '../../AuthContext';
 import { useLocation } from '../../LocationContext';
 import { Order, Pharmacy } from '../../types';
-import { MOCK_ORDERS } from '../../staticData';
-import { logUI } from '../../utils/uiLogger';
 import { api } from '../../services/api';
 
 const CustomerDashboard: React.FC = () => {
   const { profile } = useAuth();
-  const { location } = useLocation();
+  const { location, setLocation } = useLocation();
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [nearbyPharmacies, setNearbyPharmacies] = useState<Pharmacy[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,10 +27,16 @@ const CustomerDashboard: React.FC = () => {
     const fetchData = async () => {
       if (!profile) return;
       
-      // Use mock data
-      setRecentOrders(MOCK_ORDERS.filter(o => o.customerId === profile.uid).slice(0, 3) as any);
+      const recent = await api.getOrders({ customerId: profile.uid });
+      setRecentOrders(recent.slice(0, 3) as any);
       const customerVisiblePharmacies = await api.getPharmaciesForCustomer();
-      setNearbyPharmacies(customerVisiblePharmacies.slice(0, 4) as any);
+      const filtered = customerVisiblePharmacies.filter((pharmacy) => {
+        if (!location) return true;
+        const city = (pharmacy.address?.city || '').toLowerCase();
+        const area = (pharmacy.address?.area || '').toLowerCase();
+        return city === location.city.toLowerCase() || area === location.area.toLowerCase();
+      });
+      setNearbyPharmacies(filtered.slice(0, 4) as any);
       setLoading(false);
     };
 
@@ -127,15 +131,21 @@ const CustomerDashboard: React.FC = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() =>
-                    logUI('ACTION', {
-                      component: 'CustomerDashboard',
-                      action: 'Change Location',
-                      expected: 'should open location selector',
-                      status: 'partial',
-                      reason: 'Location selector route not implemented yet',
-                    })
-                  }
+                  onClick={() => {
+                    const city = window.prompt('Enter city', location?.city || 'Ahmedabad') || '';
+                    const area = window.prompt('Enter area', location?.area || 'Satellite') || '';
+                    const pincode = window.prompt('Enter pincode', location?.pincode || '380015') || '';
+                    if (!city || !area || !pincode) return;
+                    setLocation({
+                      country: 'India',
+                      state: 'Gujarat',
+                      city,
+                      area,
+                      locality: area,
+                      pincode,
+                      landmark: '',
+                    });
+                  }}
                   className="w-full py-2 text-sm font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors"
                 >
                   Change Location
