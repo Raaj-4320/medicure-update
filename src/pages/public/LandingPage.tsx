@@ -1,22 +1,32 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   MapPin, 
-  Search, 
   ShieldCheck, 
   Truck, 
   Clock, 
   ChevronRight,
   ArrowRight,
-  Store,
-  Activity
+  Activity,
+  ShoppingBag,
+  AlertCircle,
+  Plus
 } from 'lucide-react';
 import { useLocation, LocationState } from '../../LocationContext';
+import { useAuth } from '../../AuthContext';
+import { api } from '../../services/api';
+import { Pharmacy, SellerMedicine } from '../../types';
 
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const { setLocation } = useLocation();
+  const { user, profile } = useAuth();
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [marketItems, setMarketItems] = useState<SellerMedicine[]>([]);
+  const [pharmacyById, setPharmacyById] = useState<Record<string, Pharmacy>>({});
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [cartCount, setCartCount] = useState(0);
+  const [cartFeedback, setCartFeedback] = useState('');
   
   const [tempLocation, setTempLocation] = useState<LocationState>({
     country: 'India',
@@ -31,6 +41,114 @@ const LandingPage: React.FC = () => {
   const handleSetLocation = () => {
     setLocation(tempLocation);
     navigate('/discover');
+  };
+
+  useEffect(() => {
+    const loadMarketplace = async () => {
+      try {
+        setMarketLoading(true);
+        const [inventory, pharmacies] = await Promise.all([
+          api.getInventory({}),
+          api.getPharmaciesForCustomer(),
+        ]);
+        const topItems = inventory
+          .filter((item) => item.isVisible !== false && item.stock > 0 && (item as any).isActive !== false)
+          .slice(0, 8);
+        setMarketItems(topItems);
+        setPharmacyById(
+          pharmacies.reduce<Record<string, Pharmacy>>((acc, pharmacy) => {
+            acc[pharmacy.id] = pharmacy;
+            return acc;
+          }, {})
+        );
+      } finally {
+        setMarketLoading(false);
+      }
+    };
+    loadMarketplace();
+  }, []);
+
+  const hasMarketItems = useMemo(() => marketItems.length > 0, [marketItems.length]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('cart');
+      const parsed = saved ? JSON.parse(saved) : [];
+      const normalized = Array.isArray(parsed) ? parsed : [];
+      const count = normalized.reduce((acc, item) => acc + (Number(item?.quantity) || 0), 0);
+      setCartCount(count);
+    } catch (error) {
+      console.warn('Failed to parse cart for landing page badge', error);
+      setCartCount(0);
+    }
+  }, []);
+
+  const isLoggedInCustomer = Boolean(user && profile?.role === 'customer');
+
+  const addToCart = (med: SellerMedicine) => {
+    if (!isLoggedInCustomer) {
+      window.alert('Please login to continue purchase.');
+      navigate('/login', { state: { returnTo: '/' } });
+      return;
+    }
+
+    let currentCart: any[] = [];
+    try {
+      const saved = localStorage.getItem('cart');
+      const parsed = saved ? JSON.parse(saved) : [];
+      currentCart = Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn('Failed to parse cart on landing add-to-cart; resetting', error);
+      currentCart = [];
+    }
+    const cart: any[] = Array.isArray(currentCart) ? currentCart : [];
+
+    if (cart.length > 0 && cart[0]?.pharmacyId && cart[0].pharmacyId !== med.pharmacyId) {
+      const shouldReplace = window.confirm('Your cart contains items from another pharmacy. Replace cart with this pharmacy items?');
+      if (!shouldReplace) return;
+      const replacementCart = [{
+        id: med.id,
+        medicineId: med.id,
+        sellerMedicineId: med.id,
+        medicineName: med.name,
+        brandName: med.name,
+        price: med.discountPrice || med.price,
+        quantity: 1,
+        pharmacyId: med.pharmacyId,
+        sellerId: med.sellerId,
+        rxRequired: med.rxRequired,
+        image: med.image,
+      }];
+      localStorage.setItem('cart', JSON.stringify(replacementCart));
+      setCartCount(1);
+      setCartFeedback(`${med.name || 'Medicine'} added to cart`);
+      return;
+    }
+
+    const newCart: any[] = [...cart];
+    const existingIndex = newCart.findIndex(item => item.id === med.id);
+
+    if (existingIndex !== -1) {
+      newCart[existingIndex].quantity += 1;
+    } else {
+      newCart.push({
+        id: med.id,
+        medicineId: med.id,
+        sellerMedicineId: med.id,
+        medicineName: med.name,
+        brandName: med.name,
+        price: med.discountPrice || med.price,
+        quantity: 1,
+        pharmacyId: med.pharmacyId,
+        sellerId: med.sellerId,
+        rxRequired: med.rxRequired,
+        image: med.image,
+      });
+    }
+
+    localStorage.setItem('cart', JSON.stringify(newCart));
+    setCartCount(newCart.reduce((acc, item) => acc + (Number(item?.quantity) || 0), 0));
+    setCartFeedback(`${med.name || 'Medicine'} added to cart`);
   };
 
   return (
@@ -77,6 +195,13 @@ const LandingPage: React.FC = () => {
                 Join as Seller
                 <ArrowRight className="w-5 h-5" />
               </Link>
+              <button
+                onClick={() => navigate('/discover')}
+                className="w-full sm:w-auto px-8 py-4 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 text-lg"
+              >
+                <ShoppingBag className="w-5 h-5" />
+                Browse Medicines
+              </button>
             </div>
 
             <div className="mt-12 flex items-center gap-8">
@@ -131,6 +256,75 @@ const LandingPage: React.FC = () => {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="py-20 px-6 md:px-12">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h2 className="text-3xl font-bold text-slate-900">Marketplace Medicines</h2>
+              <p className="text-slate-500 mt-1">Live items listed by sellers.</p>
+              {cartFeedback && <p className="text-emerald-600 text-sm font-semibold mt-2">{cartFeedback}</p>}
+            </div>
+            <div className="flex items-center gap-4">
+              {cartCount > 0 && (
+                <button
+                  onClick={() => navigate('/cart')}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold inline-flex items-center gap-2"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  View Cart ({cartCount})
+                </button>
+              )}
+              <Link to="/discover" className="text-emerald-600 font-semibold inline-flex items-center gap-2">
+                Explore stores <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </div>
+
+          {marketLoading ? (
+            <p className="text-slate-500">Loading marketplace…</p>
+          ) : !hasMarketItems ? (
+            <p className="text-slate-500">No seller medicines available yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {marketItems.map((item) => (
+                <div key={item.id} className="border border-slate-200 rounded-2xl p-4 bg-white flex flex-col">
+                  <div className="w-full aspect-square rounded-xl bg-slate-100 overflow-hidden mb-3">
+                    {item.image ? (
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">No image</div>
+                    )}
+                  </div>
+                  <h3 className="font-bold text-slate-900 line-clamp-1">{item.name || 'Medicine'}</h3>
+                  <p className="text-sm text-slate-500">{item.category || 'General'}</p>
+                  <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.description || 'No description available.'}</p>
+                  {item.rxRequired && (
+                    <p className="mt-2 text-[10px] font-bold uppercase text-red-600 inline-flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      Prescription required
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500 mt-2">
+                    Seller: <span className="font-semibold text-slate-700">{pharmacyById[item.pharmacyId]?.name || 'Pharmacy'}</span>
+                  </p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="font-bold text-emerald-700">₹{item.discountPrice || item.price}</span>
+                    <span className="text-xs text-slate-500">{item.stock > 0 ? `Stock: ${item.stock}` : 'Out of stock'}</span>
+                  </div>
+                  <button
+                    onClick={() => addToCart(item)}
+                    className="mt-3 w-full px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 inline-flex items-center justify-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add to Cart
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

@@ -30,20 +30,32 @@ export default function SellerOrders() {
         received: { ownerId: profile?.uid || null },
         success: true,
       });
-      const pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
-      const myPharmacy = pharmacies[0];
+      let pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
+      let myPharmacy = pharmacies[0];
+      if (!myPharmacy && profile?.uid) {
+        await api.createPharmacy({
+          id: profile.uid,
+          ownerId: profile.uid,
+          sellerId: profile.uid,
+          name: `${profile.displayName || 'Seller'} Pharmacy`,
+          email: profile.email || '',
+          contactNumber: profile.phoneNumber || '',
+          status: 'pending',
+          verificationStatus: 'pending',
+          description: '',
+          address: {},
+          operatingHours: '09:00-21:00',
+        });
+        pharmacies = await api.getPharmacies({ ownerId: profile.uid });
+        myPharmacy = pharmacies[0];
+      }
       if (!myPharmacy) {
         setHasPharmacy(false);
         setOrders([]);
-        logFlow('SELLER_ORDERS_FETCH', {
-          expected: ['pharmacy for seller'],
-          received: { ownerId: profile?.uid || null, hasPharmacy: false },
-          success: false,
-        });
         return;
       }
       setHasPharmacy(true);
-      const data = await api.getOrders({ pharmacyId: myPharmacy.id });
+      const data = await api.getOrders({ sellerId: profile?.uid || '', pharmacyId: myPharmacy.id });
       setOrders(data.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       logFlow('SELLER_ORDERS_FETCH', {
         expected: ['orders for pharmacyId'],
@@ -67,17 +79,39 @@ export default function SellerOrders() {
     let unsubscribe: (() => void) | null = null;
     const init = async () => {
       await fetchOrders();
-      const pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
-      const myPharmacy = pharmacies[0];
+      let pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
+      let myPharmacy = pharmacies[0];
+      if (!myPharmacy && profile?.uid) {
+        await api.createPharmacy({
+          id: profile.uid,
+          ownerId: profile.uid,
+          sellerId: profile.uid,
+          name: `${profile.displayName || 'Seller'} Pharmacy`,
+          email: profile.email || '',
+          contactNumber: profile.phoneNumber || '',
+          status: 'pending',
+          verificationStatus: 'pending',
+          description: '',
+          address: {},
+          operatingHours: '09:00-21:00',
+        });
+        pharmacies = await api.getPharmacies({ ownerId: profile.uid });
+        myPharmacy = pharmacies[0];
+      }
       if (myPharmacy?.id) {
         unsubscribe = api.subscribeToOrders({ pharmacyId: myPharmacy.id }, (liveOrders: any[]) => {
-          setOrders(liveOrders);
+          const onlyMine = liveOrders.filter((order) =>
+            (order.items || []).some((item: any) => item.sellerId === profile?.uid),
+          );
+          setOrders(onlyMine);
         });
       }
     };
     init();
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
     };
   }, [profile]);
 
@@ -211,10 +245,10 @@ export default function SellerOrders() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Items</h4>
                     <div className="space-y-2">
-                      {order.items.map((item: any, idx: number) => (
+                      {(order.items || []).map((item: any, idx: number) => (
                         <div key={idx} className="flex justify-between text-sm">
-                          <span className="text-slate-600">Medicine ID: {item.medicineId} x {item.quantity}</span>
-                          <span className="font-bold text-slate-900">₹{(item.price * item.quantity).toFixed(2)}</span>
+                          <span className="text-slate-600">{item.medicineName || item.medicineId || item.medicineMasterId || 'Medicine'} x {item.quantity}</span>
+                          <span className="font-bold text-slate-900">₹{(Number(item.price || 0) * Number(item.quantity || 0)).toFixed(2)}</span>
                         </div>
                       ))}
                       <div className="pt-2 flex justify-between font-bold text-slate-900">

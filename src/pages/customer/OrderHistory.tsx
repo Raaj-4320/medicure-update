@@ -17,6 +17,7 @@ export default function OrderHistory() {
   const { profile } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
 
   const fetchOrders = async () => {
     try {
@@ -35,7 +36,11 @@ export default function OrderHistory() {
       setOrders(liveOrders);
       setLoading(false);
     });
-    return () => unsubscribe();
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
   }, [profile]);
 
   const getStatusIcon = (status: string) => {
@@ -118,18 +123,18 @@ export default function OrderHistory() {
 
               <div className="flex items-center justify-between pt-4 border-t border-slate-50">
                 <div className="flex -space-x-2">
-                  {order.items.slice(0, 3).map((item: any, idx: number) => (
+                  {(order.items || []).slice(0, 3).map((item: any, idx: number) => (
                     <div key={idx} className="w-8 h-8 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-slate-600">
-                      {item.medicineId.slice(0, 2).toUpperCase()}
+                      {(item.medicineId || item.medicineMasterId || 'NA').toString().slice(0, 2).toUpperCase()}
                     </div>
                   ))}
-                  {order.items.length > 3 && (
+                  {(order.items || []).length > 3 && (
                     <div className="w-8 h-8 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[10px] font-bold text-slate-600">
-                      +{order.items.length - 3}
+                      +{(order.items || []).length - 3}
                     </div>
                   )}
                 </div>
-                <button className="text-emerald-600 text-sm font-bold flex items-center gap-1 hover:gap-2 transition-all">
+                <button onClick={() => setSelectedOrder(order)} className="text-emerald-600 text-sm font-bold flex items-center gap-1 hover:gap-2 transition-all">
                   View Details
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -141,6 +146,48 @@ export default function OrderHistory() {
               )}
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {selectedOrder && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl border border-slate-200 p-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-slate-900">Order Details #{selectedOrder.id}</h2>
+              <button onClick={() => setSelectedOrder(null)} className="text-slate-500 hover:text-slate-800">Close</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mb-4">
+              <div><span className="text-slate-500">Date:</span> {new Date(selectedOrder.createdAt).toLocaleString()}</div>
+              <div><span className="text-slate-500">Status:</span> {getStatusText(selectedOrder.status)}</div>
+              <div><span className="text-slate-500">Payment:</span> {(selectedOrder.paymentStatus || 'pending').replace('_', ' ').toUpperCase()}</div>
+              <div><span className="text-slate-500">Method:</span> {(selectedOrder.paymentMethod || 'upi').replace('_', ' ').toUpperCase()}</div>
+            </div>
+            <div className="mb-4 text-sm">
+              <h3 className="font-bold text-slate-900 mb-1">Delivery Address</h3>
+              <p className="text-slate-600">
+                {selectedOrder.deliveryAddress?.locality || selectedOrder.deliveryAddress?.area || '-'}, {selectedOrder.deliveryAddress?.city || '-'} - {selectedOrder.deliveryAddress?.pincode || '-'}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <h3 className="font-bold text-slate-900">Items</h3>
+              {(selectedOrder.items || []).map((item: any, idx: number) => (
+                <div key={idx} className="flex items-center justify-between border border-slate-100 rounded-lg p-3">
+                  <div className="flex items-center gap-3">
+                    {item.imageUrl ? <img src={item.imageUrl} alt={item.medicineName || 'Medicine'} className="w-10 h-10 rounded-lg object-cover" /> : <div className="w-10 h-10 bg-slate-100 rounded-lg" />}
+                    <div>
+                      <div className="font-semibold text-slate-900">{item.medicineName || item.medicineId || 'Medicine'}</div>
+                      <div className="text-xs text-slate-500">Qty: {item.quantity} • ₹{item.price}</div>
+                    </div>
+                  </div>
+                  <div className="font-bold text-slate-900">₹{(Number(item.price || 0) * Number(item.quantity || 0)).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between">
+              <span className="font-bold text-slate-900">Total</span>
+              <span className="font-bold text-emerald-600">₹{Number(selectedOrder.totalAmount || 0).toFixed(2)}</span>
+            </div>
+          </div>
         </div>
       )}
     </div>
