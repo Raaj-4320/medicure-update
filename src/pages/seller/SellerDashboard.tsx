@@ -66,10 +66,14 @@ const SellerDashboard: React.FC = () => {
   const [bestSellers, setBestSellers] = useState<{ name: string; sales: number; color: string }[]>([]);
   const [profileComplete, setProfileComplete] = useState(true);
   const [hasInventoryItems, setHasInventoryItems] = useState(true);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!profile) return;
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
       
       try {
         setLoading(true);
@@ -203,7 +207,7 @@ const SellerDashboard: React.FC = () => {
     };
 
     fetchData();
-  }, [profile]);
+  }, [profile, refreshTick]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>;
   if (!hasPharmacy) {
@@ -271,14 +275,6 @@ const SellerDashboard: React.FC = () => {
       </div>
     );
   }
-  if (pharmacyStatus !== 'verified') {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">Your pharmacy is under admin review</h2>
-        <p className="text-slate-600">Complete verification is required before seller operations become available.</p>
-      </div>
-    );
-  }
   if (!hasInventoryItems) {
     return (
       <div className="bg-white rounded-2xl border border-amber-200 p-8">
@@ -293,6 +289,11 @@ const SellerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-8 pb-12">
+      {pharmacyStatus !== 'verified' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-800 text-sm">
+          Your pharmacy verification is still pending. You can continue managing inventory and orders while review is in progress.
+        </div>
+      )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Store Dashboard</h1>
@@ -300,17 +301,17 @@ const SellerDashboard: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() =>
+            onClick={() => {
               logUI('BUTTON_CLICK', {
-                context: 'Sync Inventory',
-                success: false,
-                reason: 'No handler attached',
-              })
-            }
+                context: 'Refresh Medicines',
+                success: true,
+              });
+              setRefreshTick((prev) => prev + 1);
+            }}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
           >
             <RefreshCw className="w-4 h-4" />
-            Sync Inventory
+            Refresh Medicines
           </button>
           <Link to="/seller/inventory" className="flex items-center gap-2 px-4 py-2 bg-emerald-600 rounded-xl text-sm font-semibold text-white hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200">
             <Plus className="w-4 h-4" />
