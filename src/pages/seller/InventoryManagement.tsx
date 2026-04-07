@@ -1,266 +1,339 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Plus,
-  Search,
-  Filter,
-  Edit2,
-  Trash2,
-  AlertTriangle,
-  Loader2,
-  ArrowUpRight
-} from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ImagePlus, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
-import { MedicineMaster, SellerMedicine } from '../../types';
-import { logFlow } from '../../utils/flowLogger';
-import { logUI } from '../../utils/uiLogger';
+import { SellerMedicine } from '../../types';
 
 const InventoryManagement: React.FC = () => {
   const { profile } = useAuth();
-  const [medicines, setMedicines] = useState<SellerMedicine[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [pharmacyId, setPharmacyId] = useState<string>('');
+  const [pharmacyId, setPharmacyId] = useState('');
+  const [medicines, setMedicines] = useState<SellerMedicine[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [masters, setMasters] = useState<MedicineMaster[]>([]);
-  const [selectedMasterId, setSelectedMasterId] = useState('');
-  const [newPrice, setNewPrice] = useState('');
-  const [newStock, setNewStock] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const activeUploadController = useRef<AbortController | null>(null);
 
-  const fetchInventory = async () => {
-    if (!profile) return;
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    category: '',
+    price: '',
+    stock: '',
+    rxRequired: false,
+    image: '',
+    imagePath: '',
+  });
+
+  const fetchSellerMedicines = async () => {
+    if (!profile?.uid) return;
     try {
       setLoading(true);
-      const pharmacies = await api.getPharmacies({ ownerId: profile.uid });
-      if (pharmacies.length === 0) {
-        setErrorMessage('No pharmacy found for this seller account.');
-        setMedicines([]);
-        return;
+      let pharmacies = await api.getPharmacies({ ownerId: profile.uid });
+      if (!pharmacies.length) {
+        await api.createPharmacy({
+          id: profile.uid,
+          ownerId: profile.uid,
+          sellerId: profile.uid,
+          name: `${profile.displayName || 'Seller'} Pharmacy`,
+          email: profile.email || '',
+          contactNumber: profile.phoneNumber || '',
+          status: 'pending',
+          verificationStatus: 'pending',
+          description: '',
+          address: {},
+          operatingHours: '09:00-21:00',
+        });
+        pharmacies = await api.getPharmacies({ ownerId: profile.uid });
       }
+      if (!pharmacies.length) throw new Error('Unable to initialize seller pharmacy.');
+      const sellerPharmacyId = pharmacies[0].id;
+      setPharmacyId(sellerPharmacyId);
       setErrorMessage('');
-      const pId = pharmacies[0].id;
-      setPharmacyId(pId);
 
-      const inventory = await api.getInventory({ pharmacyId: pId });
-      const medicineMasterData = await api.getMedicines({ includeAll: 'true' });
-      setMasters(medicineMasterData as MedicineMaster[]);
-
-      const enriched = await Promise.all(inventory.map(async (item: any) => {
-        if (!item.medicineMasterId) {
-          logFlow('INVENTORY_JOIN', {
-            expected: ['medicineMasterId'],
-            received: { itemId: item.id, medicineMasterId: item.medicineMasterId },
-            success: false,
-          });
-        }
-        const masterData = item.medicineMasterId
-          ? await api.getMedicines({ id: item.medicineMasterId, includeAll: 'true' })
-          : [];
-        const resolvedMasterData = Array.isArray(masterData) ? masterData[0] : masterData;
-        if (!resolvedMasterData) {
-          logFlow('INVENTORY_JOIN', {
-            expected: ['master data by medicineMasterId'],
-            received: { itemId: item.id, medicineMasterId: item.medicineMasterId },
-            success: false,
-          });
-        }
-        return {
-          ...item,
-          masterData: resolvedMasterData
-        };
-      }));
-
-      setMedicines(enriched);
-      logFlow('INVENTORY_FETCH', {
-        expected: ['pharmacy', 'inventory', 'medicine master'],
-        received: { inventoryCount: enriched.length },
-        success: true,
-      });
-    } catch (err: any) {
-      logFlow('INVENTORY_FETCH', {
-        expected: ['pharmacy', 'inventory', 'medicine master'],
-        received: null,
-        success: false,
-        error: err,
-      });
-      setErrorMessage(err?.message || 'Error fetching inventory');
+      const mine = await api.getInventory({ sellerId: profile.uid, pharmacyId: sellerPharmacyId });
+      setMedicines(mine);
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Failed to load seller medicines.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchInventory();
-  }, [profile]);
+    fetchSellerMedicines();
+  }, [profile?.uid]);
 
-  const handleCreateInventory = async () => {
-    if (!profile?.uid) throw new Error('Seller profile not found');
-    if (!pharmacyId) throw new Error('No pharmacy found');
-    if (!selectedMasterId) {
-      logFlow('CREATE_INVENTORY_FORM', {
-        expected: ['medicineMasterId'],
-        received: { medicineMasterId: selectedMasterId },
-        success: false,
-      });
-      throw new Error('Please select a medicine from medicine master.');
+  const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+  const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+  const cloudinaryFolder = import.meta.env.VITE_CLOUDINARY_FOLDER || 'seller-medicines';
+
+  const uploadToCloudinary = async (file: File, sellerId: string): Promise<{ secureUrl: string; publicId: string }> => {
+    if (!cloudinaryCloudName || !cloudinaryUploadPreset) {
+      throw new Error('Cloudinary is not configured. Please set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET.');
     }
-    const price = Number(newPrice);
-    const stock = Number(newStock);
-    if (!Number.isFinite(price) || !Number.isFinite(stock) || price <= 0 || stock < 0) {
-      logFlow('CREATE_INVENTORY_FORM', {
-        expected: ['price > 0', 'stock >= 0'],
-        received: { price, stock },
-        success: false,
-      });
-      throw new Error('Price must be > 0 and stock must be >= 0.');
-    }
-    await api.createInventoryEntry({
-      pharmacyId,
-      sellerId: profile.uid,
-      medicineMasterId: selectedMasterId,
-      price,
-      stock,
-      isVisible: true,
-      isFeatured: false,
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', cloudinaryUploadPreset);
+    formData.append('folder', `${cloudinaryFolder}/${sellerId}`);
+
+    activeUploadController.current?.abort();
+    const controller = new AbortController();
+    activeUploadController.current = controller;
+
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
     });
-    setSuccessMessage('Medicine submitted for admin approval.');
-    logUI('CREATE_INVENTORY', { context: `Inventory created for ${selectedMasterId}`, success: true });
-    setSelectedMasterId('');
-    setNewPrice('');
-    setNewStock('');
-    await fetchInventory();
+    if (!response.ok) {
+      throw new Error('Cloudinary upload failed. Please retry.');
+    }
+    const payload = await response.json();
+    if (!payload?.secure_url) {
+      throw new Error('Cloudinary upload returned an invalid response.');
+    }
+    return { secureUrl: payload.secure_url as string, publicId: (payload.public_id as string) || '' };
   };
 
-  const handleEdit = async (item: any) => {
-    const stock = Number(window.prompt('Update stock', String(item.stock)) || item.stock);
-    const price = Number(window.prompt('Update price', String(item.price)) || item.price);
+  const handleImageSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !profile?.uid) return;
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('Please select a valid image file.');
+      event.target.value = '';
+      return;
+    }
+    const preview = URL.createObjectURL(file);
+    setLocalPreviewUrl(preview);
     try {
-      logUI('EDIT_INVENTORY', { context: `Inventory ${item.id}`, success: true });
-      await api.updateInventory(item.id, { stock, price });
-      await fetchInventory();
-    } catch (error) {
-      setErrorMessage('Failed to update inventory item');
-      logUI('EDIT_INVENTORY', { context: `Inventory ${item.id}`, success: false, reason: (error as Error)?.message || 'update failed' });
+      setUploadingImage(true);
+      setErrorMessage('');
+      setSuccessMessage('');
+      console.info('[SELLER_IMAGE_UPLOAD] started', { name: file.name, size: file.size, type: file.type });
+      const uploadResult = await uploadToCloudinary(file, profile.uid);
+      setForm((prev) => ({ ...prev, image: uploadResult.secureUrl, imagePath: uploadResult.publicId }));
+      console.info('[SELLER_IMAGE_UPLOAD] success', { path: uploadResult.publicId });
+      setSuccessMessage('Image uploaded.');
+    } catch (error: any) {
+      console.error('[SELLER_IMAGE_UPLOAD] failed', error);
+      setErrorMessage(error?.message || 'Image upload failed.');
+      setForm((prev) => ({ ...prev, image: '', imagePath: '' }));
+    } finally {
+      activeUploadController.current = null;
+      setUploadingImage(false);
+      if (event.target) event.target.value = '';
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      activeUploadController.current?.abort();
+      if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+    };
+  }, [localPreviewUrl]);
+
+  const handleCreateMedicine = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!profile?.uid) {
+      setErrorMessage('Seller profile not found.');
+      return;
+    }
+    if (!pharmacyId) return;
+    if (!form.name || !form.description || !form.category || !form.price || !form.stock) {
+      setErrorMessage('Please complete all required fields.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setErrorMessage('');
+      await api.createInventoryEntry({
+        sellerId: profile.uid,
+        pharmacyId,
+        name: form.name,
+        description: form.description,
+        category: form.category,
+        price: Number(form.price),
+        stock: Number(form.stock),
+        rxRequired: form.rxRequired,
+        image: form.image,
+        imagePath: form.imagePath,
+        isVisible: true,
+        isFeatured: false,
+        isActive: true,
+      });
+      setForm({
+        name: '',
+        description: '',
+        category: '',
+        price: '',
+        stock: '',
+        rxRequired: false,
+        image: '',
+        imagePath: '',
+      });
+      setSuccessMessage('Medicine created successfully.');
+      await fetchSellerMedicines();
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Failed to create medicine.');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this inventory item?')) return;
+    if (!window.confirm('Delete this medicine?')) return;
     try {
-      logUI('DELETE_INVENTORY', { context: `Inventory ${id}`, success: true });
-      await api.deleteInventory(id);
-      await fetchInventory();
-    } catch (error) {
-      setErrorMessage('Failed to delete inventory item');
-      logUI('DELETE_INVENTORY', { context: `Inventory ${id}`, success: false, reason: (error as Error)?.message || 'delete failed' });
+      await api.deleteInventory(id, profile?.uid);
+      setSuccessMessage('Medicine deleted.');
+      await fetchSellerMedicines();
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Failed to delete medicine.');
     }
   };
 
-  const filtered = medicines.filter((m: any) =>
-    (m.masterData?.brandName || m.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+  const handleQuickEdit = async (item: SellerMedicine) => {
+    const price = Number(window.prompt('Update price', String(item.price)) || item.price);
+    const stock = Number(window.prompt('Update stock', String(item.stock)) || item.stock);
+    try {
+      await api.updateInventory(item.id, { price, stock, sellerId: profile?.uid || '' });
+      setSuccessMessage('Medicine updated.');
+      await fetchSellerMedicines();
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Failed to update medicine.');
+    }
+  };
+
+  const filteredMedicines = useMemo(
+    () =>
+      medicines.filter((item) => {
+        const query = searchQuery.toLowerCase();
+        return (
+          (item.name || '').toLowerCase().includes(query) ||
+          (item.category || '').toLowerCase().includes(query) ||
+          (item.description || '').toLowerCase().includes(query)
+        );
+      }),
+    [medicines, searchQuery],
   );
 
-  if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Inventory Management</h1>
-          <p className="text-slate-500 text-sm">Manage your medicine stock and pricing</p>
+          <h1 className="text-2xl font-bold text-slate-900">My Medicines</h1>
+          <p className="text-slate-500 text-sm">Create and manage your own seller medicines directly.</p>
         </div>
-        <span className="text-xs text-slate-500">Create inventory from medicine master only.</span>
       </div>
 
-      {errorMessage && <div className="p-3 rounded-xl bg-amber-50 text-amber-700 text-sm font-medium">{errorMessage}</div>}
+      {errorMessage && <div className="p-3 rounded-xl bg-red-50 text-red-600 text-sm font-medium">{errorMessage}</div>}
       {successMessage && <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm font-medium">{successMessage}</div>}
 
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-        <h3 className="font-bold text-slate-900 flex items-center gap-2"><Plus className="w-4 h-4" />Add Inventory Item</h3>
-        {masters.length === 0 ? (
-          <p className="text-sm text-amber-700">Medicine catalog is empty. Contact admin.</p>
-        ) : (
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (submitting) return;
-              setSubmitting(true);
-              setErrorMessage('');
-              try {
-                await handleCreateInventory();
-              } catch (error: any) {
-                setErrorMessage(error?.message || 'Failed to create inventory');
-                logUI('CREATE_INVENTORY', { context: 'Inventory submit', success: false, reason: error?.message || 'submit failed' });
-              } finally {
-                setSubmitting(false);
-              }
-            }}
-            className="space-y-3"
-          >
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <select
-                value={selectedMasterId}
-                onChange={(e) => {
-                  setSelectedMasterId(e.target.value);
-                }}
-                className="px-3 py-2 rounded-xl border border-slate-200 md:col-span-2"
-              >
-                <option value="">Select medicine</option>
-                {masters.map((master) => (
-                  <option key={master.id} value={master.id}>
-                    {master.brandName} ({master.genericName})
-                  </option>
-                ))}
-              </select>
-              <input value={newPrice} onChange={(e) => setNewPrice(e.target.value)} type="number" placeholder="Price" className="px-3 py-2 rounded-xl border border-slate-200" />
-              <input value={newStock} onChange={(e) => setNewStock(e.target.value)} type="number" placeholder="Stock" className="px-3 py-2 rounded-xl border border-slate-200" />
-            </div>
-            <button
-              type="submit"
-              className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold disabled:opacity-60"
-              disabled={submitting || !selectedMasterId || masters.length === 0}
-            >
-              {submitting ? 'Saving…' : 'Save Inventory'}
-            </button>
-          </form>
-        )}
-        {!selectedMasterId && masters.length > 0 && (
-          <p className="text-xs text-red-600">Please select a medicine to create inventory.</p>
-        )}
-        {selectedMasterId && (
-          <div className="text-xs text-slate-600">
-            {(() => {
-              const selected = masters.find((master) => master.id === selectedMasterId);
-              if (!selected) return null;
-              return <span>Category: {selected.category} • Manufacturer: {selected.manufacturer} • Schedule: {selected.schedule}</span>;
-            })()}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <h3 className="font-bold text-slate-900 mb-4">Add Medicine</h3>
+        <form onSubmit={handleCreateMedicine} className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              value={form.name}
+              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Medicine name"
+              className="px-3 py-2 rounded-xl border border-slate-200"
+            />
+            <input
+              value={form.category}
+              onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
+              placeholder="Category"
+              className="px-3 py-2 rounded-xl border border-slate-200"
+            />
+            <input
+              type="number"
+              value={form.price}
+              onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))}
+              placeholder="Price"
+              className="px-3 py-2 rounded-xl border border-slate-200"
+            />
+            <input
+              type="number"
+              value={form.stock}
+              onChange={(e) => setForm((prev) => ({ ...prev, stock: e.target.value }))}
+              placeholder="Quantity/Stock"
+              className="px-3 py-2 rounded-xl border border-slate-200"
+            />
           </div>
-        )}
+
+          <textarea
+            value={form.description}
+            onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+            placeholder="Description"
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 min-h-24"
+          />
+
+          <div className="flex items-center justify-between gap-3">
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.rxRequired}
+                onChange={(e) => setForm((prev) => ({ ...prev, rxRequired: e.target.checked }))}
+              />
+              Prescription required
+            </label>
+
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleImageSelect}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingImage}
+                className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                title="Upload medicine image"
+              >
+                <ImagePlus className="w-5 h-5" />
+              </button>
+              <span className="text-xs text-slate-500">{uploadingImage ? 'Uploading image…' : form.image ? 'Image attached' : 'Add image (+)'}</span>
+            </div>
+          </div>
+
+          {(localPreviewUrl || form.image) && (
+            <img src={localPreviewUrl || form.image} alt="Medicine upload" className="w-20 h-20 rounded-xl object-cover border border-slate-200" />
+          )}
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold disabled:opacity-60"
+          >
+            {saving ? 'Saving…' : 'Save Medicine'}
+          </button>
+        </form>
       </div>
 
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search inventory..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 transition-all"
-          />
-        </div>
-        <div className="flex gap-2">
-          <button className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 flex items-center gap-2">
-            <Filter className="w-4 h-4" />
-            Filter
-          </button>
-          <button className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 flex items-center gap-2">
-            <ArrowUpRight className="w-4 h-4" />
-            Export
-          </button>
-        </div>
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+        <Search className="w-4 h-4 text-slate-400" />
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search your medicines"
+          className="w-full px-2 py-1 outline-none text-sm"
+        />
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -272,38 +345,45 @@ const InventoryManagement: React.FC = () => {
                 <th className="px-6 py-4 font-semibold">Category</th>
                 <th className="px-6 py-4 font-semibold">Stock</th>
                 <th className="px-6 py-4 font-semibold">Price</th>
-                <th className="px-6 py-4 font-semibold">Status</th>
+                <th className="px-6 py-4 font-semibold">Rx</th>
                 <th className="px-6 py-4 font-semibold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((item: any) => (
+              {filteredMedicines.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
-                    <p className="text-sm font-bold text-slate-900">{item.masterData?.brandName || item.name}</p>
-                    <p className="text-xs text-slate-500">{item.masterData?.genericName || '-'}</p>
-                  </td>
-                  <td className="px-6 py-4"><span className="text-xs px-2 py-1 bg-slate-100 text-slate-600 rounded-full">{item.masterData?.category || '-'}</span></td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-sm font-bold ${item.stock < 20 ? 'text-red-600' : 'text-slate-900'}`}>{item.stock}</span>
-                      {item.stock < 20 && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-slate-100 overflow-hidden">
+                        {item.image ? <img src={item.image} alt={item.name} className="w-full h-full object-cover" /> : null}
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-900">{item.name || 'Unnamed medicine'}</p>
+                        <p className="text-xs text-slate-500 line-clamp-1">{item.description || '-'}</p>
+                      </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-sm font-bold text-slate-900">₹{item.price}</td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${item.isVisible ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                      {item.isVisible ? 'Visible' : 'Hidden'}
-                    </span>
-                  </td>
+                  <td className="px-6 py-4 text-sm">{item.category || '-'}</td>
+                  <td className="px-6 py-4 text-sm font-bold">{item.stock}</td>
+                  <td className="px-6 py-4 text-sm font-bold">₹{item.price}</td>
+                  <td className="px-6 py-4 text-sm">{item.rxRequired ? 'Yes' : 'No'}</td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => handleEdit(item)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"><Edit2 className="w-4 h-4" /></button>
-                      <button onClick={() => handleDelete(item.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 className="w-4 h-4" /></button>
+                      <button onClick={() => handleQuickEdit(item)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all">
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDelete(item.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </td>
                 </tr>
               ))}
+              {filteredMedicines.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">No medicines found.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
