@@ -14,6 +14,7 @@ import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
 import { logFlow } from '../../utils/flowLogger';
 import { logUI } from '../../utils/uiLogger';
+import { resolveDisplayName } from '../../utils/displayName';
 
 export default function SellerOrders() {
   const { profile } = useAuth();
@@ -21,29 +22,43 @@ export default function SellerOrders() {
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [subscriptionError, setSubscriptionError] = useState('');
   const [hasPharmacy, setHasPharmacy] = useState(true);
 
   const fetchOrders = async () => {
     try {
+      setSubscriptionError('');
       logFlow('SELLER_ORDERS_FETCH_START', {
         expected: ['pharmacy lookup by ownerId', 'orders by pharmacyId'],
         received: { ownerId: profile?.uid || null },
         success: true,
       });
-      const pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
-      const myPharmacy = pharmacies[0];
+      let pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
+      let myPharmacy = pharmacies[0];
+      if (!myPharmacy && profile?.uid) {
+        await api.createPharmacy({
+          id: profile.uid,
+          ownerId: profile.uid,
+          sellerId: profile.uid,
+          name: `${profile.displayName || 'Seller'} Pharmacy`,
+          email: profile.email || '',
+          contactNumber: profile.phoneNumber || '',
+          status: 'pending',
+          verificationStatus: 'pending',
+          description: '',
+          address: {},
+          operatingHours: '09:00-21:00',
+        });
+        pharmacies = await api.getPharmacies({ ownerId: profile.uid });
+        myPharmacy = pharmacies[0];
+      }
       if (!myPharmacy) {
         setHasPharmacy(false);
         setOrders([]);
-        logFlow('SELLER_ORDERS_FETCH', {
-          expected: ['pharmacy for seller'],
-          received: { ownerId: profile?.uid || null, hasPharmacy: false },
-          success: false,
-        });
         return;
       }
       setHasPharmacy(true);
-      const data = await api.getOrders({ pharmacyId: myPharmacy.id });
+      const data = await api.getOrders({ sellerId: profile?.uid || '', pharmacyId: myPharmacy.id });
       setOrders(data.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       logFlow('SELLER_ORDERS_FETCH', {
         expected: ['orders for pharmacyId'],
@@ -67,17 +82,46 @@ export default function SellerOrders() {
     let unsubscribe: (() => void) | null = null;
     const init = async () => {
       await fetchOrders();
-      const pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
-      const myPharmacy = pharmacies[0];
-      if (myPharmacy?.id) {
-        unsubscribe = api.subscribeToOrders({ pharmacyId: myPharmacy.id }, (liveOrders: any[]) => {
-          setOrders(liveOrders);
+      let pharmacies = await api.getPharmacies({ ownerId: profile?.uid });
+      let myPharmacy = pharmacies[0];
+      if (!myPharmacy && profile?.uid) {
+        await api.createPharmacy({
+          id: profile.uid,
+          ownerId: profile.uid,
+          sellerId: profile.uid,
+          name: `${profile.displayName || 'Seller'} Pharmacy`,
+          email: profile.email || '',
+          contactNumber: profile.phoneNumber || '',
+          status: 'pending',
+          verificationStatus: 'pending',
+          description: '',
+          address: {},
+          operatingHours: '09:00-21:00',
         });
+        pharmacies = await api.getPharmacies({ ownerId: profile.uid });
+        myPharmacy = pharmacies[0];
+      }
+      if (myPharmacy?.id) {
+        unsubscribe = api.subscribeToOrders(
+          { pharmacyId: myPharmacy.id },
+          (liveOrders: any[]) => {
+            const onlyMine = liveOrders.filter((order) =>
+              (order.sellerId && order.sellerId === profile?.uid) ||
+              (order.items || []).some((item: any) => item.sellerId === profile?.uid),
+            );
+            setOrders(onlyMine);
+          },
+          (error) => {
+            setSubscriptionError(error?.message || 'Live order updates failed. Showing latest cached list.');
+          },
+        );
       }
     };
     init();
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
     };
   }, [profile]);
 
@@ -138,6 +182,11 @@ export default function SellerOrders() {
       {errorMessage && (
         <div className="mb-4 p-3 rounded-xl bg-red-50 text-red-600 text-sm font-medium">
           {errorMessage}
+        </div>
+      )}
+      {subscriptionError && (
+        <div className="mb-4 p-3 rounded-xl bg-amber-50 text-amber-700 text-sm font-medium">
+          {subscriptionError}
         </div>
       )}
 
@@ -211,10 +260,10 @@ export default function SellerOrders() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Items</h4>
                     <div className="space-y-2">
-                      {order.items.map((item: any, idx: number) => (
+                      {(order.items || []).map((item: any, idx: number) => (
                         <div key={idx} className="flex justify-between text-sm">
-                          <span className="text-slate-600">Medicine ID: {item.medicineId} x {item.quantity}</span>
-                          <span className="font-bold text-slate-900">₹{(item.price * item.quantity).toFixed(2)}</span>
+                          <span className="text-slate-600">{item.medicineName || item.medicineId || item.medicineMasterId || 'Medicine'} x {item.quantity}</span>
+                          <span className="font-bold text-slate-900">₹{(Number(item.price || 0) * Number(item.quantity || 0)).toFixed(2)}</span>
                         </div>
                       ))}
                       <div className="pt-2 flex justify-between font-bold text-slate-900">
@@ -227,7 +276,14 @@ export default function SellerOrders() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer</h4>
                     <div className="text-sm">
-                      <p className="font-bold text-slate-900">User ID: {order.customerId}</p>
+                      <p className="font-bold text-slate-900">
+                        {resolveDisplayName({
+                          name: order.customerName,
+                          email: order.customerEmail,
+                          id: order.customerId,
+                          fallback: 'Customer',
+                        })}
+                      </p>
                       <p className="text-slate-500">Payment Method: {(order.paymentMethod || 'upi').replace('_', ' ').toUpperCase()}</p>
                       <p className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${getPaymentColor(order.paymentStatus || 'pending')}`}>
                         Payment: {(order.paymentStatus || 'pending').replace('_', ' ').toUpperCase()}
