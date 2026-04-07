@@ -144,13 +144,21 @@ export interface ServiceArea {
 export interface SellerMedicine {
   id: string;
   traceId?: string;
+  sellerId?: string;
   pharmacyId: string;
-  medicineMasterId: string;
+  medicineMasterId?: string;
+  name?: string;
+  description?: string;
+  category?: string;
+  rxRequired?: boolean;
+  image?: string;
   price: number;
   discountPrice?: number;
   stock: number;
   isVisible: boolean;
   isFeatured: boolean;
+  createdAt?: string;
+  updatedAt?: string;
   // Joined data for convenience
   masterData?: MedicineMaster;
   pharmacyData?: Pharmacy;
@@ -191,6 +199,7 @@ export interface Order {
   id: string;
   traceId?: string;
   customerId: string;
+  sellerId?: string;
   pharmacyId: string;
   status: OrderStatus;
   totalAmount: number;
@@ -214,6 +223,8 @@ export interface OrderItem {
   orderId: string;
   sellerMedicineId: string;
   medicineName: string;
+  sellerId?: string;
+  imageUrl?: string;
   quantity: number;
   price: number;
 }
