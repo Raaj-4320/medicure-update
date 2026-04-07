@@ -33,7 +33,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../../AuthContext';
 import { Order, Prescription, Notification } from '../../types';
-import { api, isPharmacyProfileComplete } from '../../services/api';
+import { api } from '../../services/api';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { checkExpectations, logFlow } from '../../utils/flowLogger';
@@ -54,22 +54,19 @@ const SellerDashboard: React.FC = () => {
   const [pendingPrescriptions, setPendingPrescriptions] = useState<Prescription[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hasPharmacy, setHasPharmacy] = useState(true);
   const [pharmacyStatus, setPharmacyStatus] = useState<'pending' | 'verified' | 'rejected'>('pending');
-  const [onboardingName, setOnboardingName] = useState('');
-  const [onboardingPhone, setOnboardingPhone] = useState('');
-  const [onboardingOwnerName, setOnboardingOwnerName] = useState('');
-  const [onboardingLicense, setOnboardingLicense] = useState('');
-  const [onboardingAddress, setOnboardingAddress] = useState('');
-  const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
   const [chartData, setChartData] = useState<{ name: string; sales: number }[]>([]);
   const [bestSellers, setBestSellers] = useState<{ name: string; sales: number; color: string }[]>([]);
-  const [profileComplete, setProfileComplete] = useState(true);
+  const [profileComplete, setProfileComplete] = useState(false);
   const [hasInventoryItems, setHasInventoryItems] = useState(true);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!profile) return;
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
       
       try {
         setLoading(true);
@@ -79,15 +76,25 @@ const SellerDashboard: React.FC = () => {
           success: true,
         });
         const pharmacies = await api.getPharmacies({ ownerId: profile.uid });
-        const myPharmacy = pharmacies[0];
+        let myPharmacy = pharmacies[0];
         if (!myPharmacy) {
-          logFlow('DASHBOARD_LOAD', {
-            expected: ['seller pharmacy exists'],
-            received: { userId: profile.uid, hasPharmacy: false },
-            success: false,
-            error: 'No pharmacy found',
+          await api.createPharmacy({
+            id: profile.uid,
+            ownerId: profile.uid,
+            sellerId: profile.uid,
+            name: `${profile.displayName || 'Seller'} Pharmacy`,
+            email: profile.email || '',
+            contactNumber: profile.phoneNumber || '',
+            description: '',
+            address: {},
+            status: 'pending',
+            verificationStatus: 'pending',
+            operatingHours: '09:00-21:00',
           });
-          setHasPharmacy(false);
+          const created = await api.getPharmacies({ ownerId: profile.uid });
+          myPharmacy = created[0];
+        }
+        if (!myPharmacy) {
           setStats({
             todayOrders: 0,
             pendingPrescriptions: 0,
@@ -101,19 +108,12 @@ const SellerDashboard: React.FC = () => {
           setNotifications([]);
           return;
         }
-        setHasPharmacy(true);
-        const isComplete = isPharmacyProfileComplete(myPharmacy as any);
+        const isComplete = Boolean(
+          myPharmacy.name &&
+          myPharmacy.contactNumber &&
+          ((myPharmacy.address as any)?.addressLine || myPharmacy.address?.city || myPharmacy.address?.area)
+        );
         setProfileComplete(isComplete);
-        if (!isComplete) {
-          logFlow('SELLER_PROFILE_GATE', {
-            expected: ['name', 'address', 'phone', 'license', 'ownerName'],
-            received: { pharmacyId: myPharmacy.id, complete: false },
-            status: 'partial',
-            partialType: 'DATA_MISSING',
-            suggestion: 'Complete pharmacy profile before accessing seller dashboard.',
-          });
-          return;
-        }
         setPharmacyStatus((myPharmacy.status || myPharmacy.verificationStatus || 'pending') as 'pending' | 'verified' | 'rejected');
 
         const [sellerOrders, inventory, prescriptions, sellerNotifications] = await Promise.all([
@@ -203,96 +203,26 @@ const SellerDashboard: React.FC = () => {
     };
 
     fetchData();
-  }, [profile]);
+  }, [profile, refreshTick]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>;
-  if (!hasPharmacy) {
-    const createOnboardingPharmacy = async () => {
-      if (!profile?.uid) return;
-      setOnboardingSubmitting(true);
-      try {
-        logUI('CREATE_PHARMACY_CLICK', { context: 'Seller onboarding create pharmacy', success: true });
-        await api.createPharmacy({
-          id: profile.uid,
-          ownerId: profile.uid,
-          sellerId: profile.uid,
-          name: onboardingName || `${profile.displayName || 'Seller'} Pharmacy`,
-          verificationDetails: {
-            ownerName: onboardingOwnerName,
-            licenseNumber: onboardingLicense,
-          },
-          contactNumber: onboardingPhone,
-          email: profile.email,
-          status: 'pending',
-          verificationStatus: 'pending',
-          address: { addressLine: onboardingAddress },
-          description: '',
-          operatingHours: '09:00-21:00',
-        });
-        window.location.reload();
-      } finally {
-        setOnboardingSubmitting(false);
-      }
-    };
-
-    return (
-      <div className="space-y-6">
-        <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
-          <h2 className="text-xl font-bold text-slate-900 mb-2">Complete your pharmacy onboarding</h2>
-          <p className="text-slate-600 mb-6">Your seller account is active, but your pharmacy profile is missing. Submit basic details to create it instantly.</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-            <input value={onboardingName} onChange={(e) => setOnboardingName(e.target.value)} placeholder="Pharmacy Name" className="px-3 py-2 rounded-xl border border-slate-200" />
-            <input value={onboardingPhone} onChange={(e) => setOnboardingPhone(e.target.value)} placeholder="Contact Number" className="px-3 py-2 rounded-xl border border-slate-200" />
-            <input value={onboardingOwnerName} onChange={(e) => setOnboardingOwnerName(e.target.value)} placeholder="Owner Name" className="px-3 py-2 rounded-xl border border-slate-200" />
-            <input value={onboardingLicense} onChange={(e) => setOnboardingLicense(e.target.value)} placeholder="License Number" className="px-3 py-2 rounded-xl border border-slate-200" />
-            <input value={onboardingAddress} onChange={(e) => setOnboardingAddress(e.target.value)} placeholder="Address" className="px-3 py-2 rounded-xl border border-slate-200 md:col-span-2" />
-          </div>
-          <div className="flex items-center gap-3">
-            <button disabled={onboardingSubmitting} onClick={createOnboardingPharmacy} className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-60">
-              {onboardingSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
-              Create Pharmacy
-            </button>
-            <Link to="/seller/profile" className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200 transition-colors">
-              Open Profile
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  if (!profileComplete) {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">Complete your pharmacy profile to continue</h2>
-        <p className="text-slate-600">Required: pharmacyName, address, phone, license, ownerName.</p>
-        <Link to="/seller/profile" className="inline-flex mt-4 px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold">
-          Complete Profile
-        </Link>
-      </div>
-    );
-  }
-  if (pharmacyStatus !== 'verified') {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">Your pharmacy is under admin review</h2>
-        <p className="text-slate-600">Complete verification is required before seller operations become available.</p>
-      </div>
-    );
-  }
-  if (!hasInventoryItems) {
-    return (
-      <div className="bg-white rounded-2xl border border-amber-200 p-8">
-        <h2 className="text-xl font-bold text-amber-700 mb-2">No medicines listed yet</h2>
-        <p className="text-slate-600 mb-4">Add medicine inventory to activate your store. Order-related actions remain disabled until inventory is available.</p>
-        <Link to="/seller/inventory" className="inline-flex px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold">
-          Add Medicine
-        </Link>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-8 pb-12">
+      {pharmacyStatus !== 'verified' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-800 text-sm">
+          Your pharmacy verification is still pending. You can continue managing inventory and orders while review is in progress.
+        </div>
+      )}
+      {!profileComplete && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-blue-800 text-sm">
+          Your profile is incomplete. You can still use seller features and update details anytime from the profile page.
+        </div>
+      )}
+      {!hasInventoryItems && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-800 text-sm">
+          No medicines listed yet. You can add inventory now from Manage Inventory.
+        </div>
+      )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Store Dashboard</h1>
@@ -300,17 +230,17 @@ const SellerDashboard: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() =>
+            onClick={() => {
               logUI('BUTTON_CLICK', {
-                context: 'Sync Inventory',
-                success: false,
-                reason: 'No handler attached',
-              })
-            }
+                context: 'Refresh Medicines',
+                success: true,
+              });
+              setRefreshTick((prev) => prev + 1);
+            }}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
           >
             <RefreshCw className="w-4 h-4" />
-            Sync Inventory
+            Refresh Medicines
           </button>
           <Link to="/seller/inventory" className="flex items-center gap-2 px-4 py-2 bg-emerald-600 rounded-xl text-sm font-semibold text-white hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200">
             <Plus className="w-4 h-4" />
