@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { ShieldCheck, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 
@@ -14,6 +14,7 @@ const [error, setError] = useState('');
 const [loading, setLoading] = useState(false);
 
 const navigate = useNavigate();
+const location = useLocation();
 const { login } = useAuth();
 
 const getRedirectPath = (userRole: string) => {
@@ -32,10 +33,9 @@ setLoading(true);
 
 
 try {
-  await login(email, password);
-
-  // 🔥 role-based redirect
-  navigate(getRedirectPath(role));
+  const actualRole = await login(email, password);
+  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+  navigate(returnTo || getRedirectPath(actualRole || role));
 
 } catch (err: any) {
   setError(err?.message || 'Login failed');
