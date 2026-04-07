@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { LocationProvider } from './LocationContext';
@@ -76,6 +76,41 @@ const ProtectedRoute: React.FC<{
   // ❌ Role mismatch
   if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
     return <Navigate to="/" />;
+  }
+
+  return <>{children}</>;
+};
+
+const AppCrashGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [hasRuntimeCrash, setHasRuntimeCrash] = useState(false);
+
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      console.error('[UI_CRASH]', event.error || event.message);
+      setHasRuntimeCrash(true);
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      console.error('[UI_CRASH_PROMISE]', event.reason);
+      setHasRuntimeCrash(true);
+    };
+
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    };
+  }, []);
+
+  if (hasRuntimeCrash) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md text-center">
+          <h1 className="text-lg font-bold text-slate-900 mb-2">Something went wrong</h1>
+          <p className="text-sm text-slate-600">A UI error occurred. Please refresh the page and try again.</p>
+        </div>
+      </div>
+    );
   }
 
   return <>{children}</>;
@@ -196,12 +231,14 @@ const AppRoutes = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <LocationProvider>
-        <Router>
-          <AppRoutes />
-        </Router>
-      </LocationProvider>
-    </AuthProvider>
+    <AppCrashGuard>
+      <AuthProvider>
+        <LocationProvider>
+          <Router>
+            <AppRoutes />
+          </Router>
+        </LocationProvider>
+      </AuthProvider>
+    </AppCrashGuard>
   );
 }
