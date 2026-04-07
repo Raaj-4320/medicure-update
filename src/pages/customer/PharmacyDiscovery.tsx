@@ -7,7 +7,6 @@ import {
   Clock, 
   Truck, 
   ShoppingBag,
-  Filter,
   ChevronRight,
   Loader2,
   Store
@@ -15,12 +14,11 @@ import {
 import { api } from '../../services/api';
 import { useLocation } from '../../LocationContext';
 import { Pharmacy } from '../../types';
-import { logUI } from '../../utils/uiLogger';
 import { checkExpectations, validateDataBinding } from '../../utils/flowLogger';
 import { logDataFlow } from '../../utils/dataLogger';
 
 const PharmacyDiscovery: React.FC = () => {
-  const { location } = useLocation();
+  const { location, setLocation } = useLocation();
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,7 +32,17 @@ const PharmacyDiscovery: React.FC = () => {
 
       try {
         const allPharmacies = await api.getPharmaciesForCustomer();
-        setPharmacies(allPharmacies);
+        const filteredByLocation = allPharmacies.filter((pharmacy) => {
+          const city = (pharmacy.address?.city || '').toLowerCase();
+          const area = (pharmacy.address?.area || '').toLowerCase();
+          const pincode = (pharmacy.address?.pincode || '').toLowerCase();
+          const selectedCity = (location?.city || '').toLowerCase();
+          const selectedArea = (location?.area || '').toLowerCase();
+          const selectedPincode = (location?.pincode || '').toLowerCase();
+          if (!selectedCity && !selectedArea && !selectedPincode) return true;
+          return city === selectedCity || area === selectedArea || pincode === selectedPincode;
+        });
+        setPharmacies(filteredByLocation);
         checkExpectations({
           page: 'Customer',
           expected: ['pharmacies'],
@@ -43,9 +51,9 @@ const PharmacyDiscovery: React.FC = () => {
         logDataFlow('CUSTOMER_PHARMACIES', {
           source: 'FIRESTORE',
           requested: ['pharmacies'],
-          received: allPharmacies,
-          rendered: allPharmacies.length > 0,
-          placeholder: allPharmacies.length === 0,
+          received: filteredByLocation,
+          rendered: filteredByLocation.length > 0,
+          placeholder: filteredByLocation.length === 0,
           requiredFields: ['id', 'name'],
           route: '/customer/pharmacies',
           filters: { location: location?.city || 'unknown', query: searchQuery || '' },
@@ -82,15 +90,21 @@ const PharmacyDiscovery: React.FC = () => {
         <h2 className="text-2xl font-bold text-slate-900 mb-2">Location Not Set</h2>
         <p className="text-slate-500 max-w-md mb-8">Please set your delivery location to discover pharmacies that serve your area.</p>
         <button
-          onClick={() =>
-            logUI('ACTION', {
-              component: 'PharmacyDiscovery',
-              action: 'Set Location',
-              expected: 'should open location modal',
-              status: 'partial',
-              reason: 'Location picker not wired in this page',
-            })
-          }
+          onClick={() => {
+            const city = window.prompt('Enter city', 'Ahmedabad') || '';
+            const area = window.prompt('Enter area', 'Satellite') || '';
+            const pincode = window.prompt('Enter pincode', '380015') || '';
+            if (!city || !area || !pincode) return;
+            setLocation({
+              country: 'India',
+              state: 'Gujarat',
+              city,
+              area,
+              locality: area,
+              pincode,
+              landmark: '',
+            });
+          }}
           className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-semibold shadow-lg shadow-emerald-100"
         >
           Set Location
@@ -118,20 +132,6 @@ const PharmacyDiscovery: React.FC = () => {
               className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 transition-all"
             />
           </div>
-          <button
-            onClick={() =>
-              logUI('ACTION', {
-                component: 'PharmacyDiscovery',
-                action: 'Filter Pharmacies',
-                expected: 'should apply filter options',
-                status: 'partial',
-                reason: 'Filter options are not implemented',
-              })
-            }
-            className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50"
-          >
-            <Filter className="w-5 h-5" />
-          </button>
         </div>
       </div>
 

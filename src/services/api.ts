@@ -192,13 +192,21 @@ function normalizeInventory(id: string, data: DocumentData): SellerMedicine {
   return {
     id,
     traceId: asString(source.traceId),
+    sellerId: asString(source.sellerId, asString(source.ownerId)),
     pharmacyId: asString(source.pharmacyId),
     medicineMasterId: asString(source.medicineMasterId),
+    name: asString(source.name, asString(source.medicineName, asString(source.brandName))),
+    description: asString(source.description),
+    category: asString(source.category),
+    rxRequired: asBoolean(source.rxRequired, asBoolean(source.requiresPrescription)),
+    image: asString(source.image, asString(source.imageUrl)),
     price: asNumber(source.price),
     discountPrice: typeof source.discountPrice === 'number' ? source.discountPrice : undefined,
     stock: asNumber(source.stock),
     isVisible: asBoolean(source.isVisible, true),
     isFeatured: asBoolean(source.isFeatured),
+    createdAt: asString(source.createdAt),
+    updatedAt: asString(source.updatedAt),
     masterData: source.masterData as SellerMedicine['masterData'],
     pharmacyData: source.pharmacyData as SellerMedicine['pharmacyData'],
   };
@@ -210,6 +218,7 @@ function normalizeOrder(id: string, data: DocumentData): Order {
     id,
     traceId: asString(source.traceId),
     customerId: asString(source.customerId),
+    sellerId: asString(source.sellerId),
     pharmacyId: asString(source.pharmacyId),
     status: (asString(source.status, 'pending') as Order['status']) ?? 'pending',
     totalAmount: asNumber(source.totalAmount),
@@ -702,6 +711,7 @@ async function getMedicines(filters: FilterOptions = {}): Promise<MedicineMaster
 }
 
 async function createMedicine(payload: Dictionary): Promise<Dictionary> {
+  // Legacy admin medicine-master flow. Seller runtime flow uses createInventoryEntry on `medicines`.
   const medicinePayload: Dictionary = {
     ...payload,
     createdAt: nowIso(),
@@ -745,16 +755,17 @@ async function createMedicine(payload: Dictionary): Promise<Dictionary> {
 }
 
 async function updateMedicine(id: string, patch: Dictionary): Promise<boolean> {
+  // Legacy admin medicine-master update path.
   return patchDoc('medicine_master', id, { ...patch, updatedAt: nowIso() });
 }
 
 async function getInventory(filters: FilterOptions = {}): Promise<SellerMedicine[]> {
-  const inventory = await listCollection('inventory', normalizeInventory, filters);
-  const validInventory = inventory.filter((item) => {
-    const isValid = Boolean(item.pharmacyId) && Boolean(item.medicineMasterId) && typeof item.price === 'number' && typeof item.stock === 'number';
+  const directMedicines = await listCollection('medicines', normalizeInventory, filters);
+  const validInventory = directMedicines.filter((item) => {
+    const isValid = Boolean(item.pharmacyId) && Boolean(item.name) && typeof item.price === 'number' && typeof item.stock === 'number';
     if (!isValid) {
       logFlow('GET_INVENTORY_VALIDATION', {
-        expected: ['pharmacyId', 'medicineMasterId', 'price:number', 'stock:number'],
+        expected: ['pharmacyId', 'name', 'price:number', 'stock:number'],
         received: item,
         success: false,
       });
@@ -764,25 +775,41 @@ async function getInventory(filters: FilterOptions = {}): Promise<SellerMedicine
   return validInventory;
 }
 
-async function updateInventory(id: string, patch: Dictionary): Promise<boolean> {
-  return patchDoc('inventory', id, { ...patch, updatedAt: nowIso() });
+async function assertMedicineOwner(id: string, sellerId?: string): Promise<void> {
+  if (!sellerId) return;
+  const medicineSnap = await getDoc(doc(db, 'medicines', id));
+  if (!medicineSnap.exists()) {
+    throw new Error('Medicine not found.');
+  }
+  const ownerId = asString(medicineSnap.data()?.sellerId);
+  if (ownerId && ownerId !== sellerId) {
+    throw new Error('Unauthorized medicine mutation.');
+  }
 }
 
-async function deleteInventory(id: string): Promise<boolean> {
-  return removeDoc('inventory', id);
+async function updateInventory(id: string, patch: Dictionary): Promise<boolean> {
+  await assertMedicineOwner(id, asString(patch.sellerId));
+  const patchPayload = { ...patch, updatedAt: nowIso() };
+  delete (patchPayload as Dictionary).sellerId;
+  return patchDoc('medicines', id, patchPayload);
+}
+
+async function deleteInventory(id: string, sellerId?: string): Promise<boolean> {
+  await assertMedicineOwner(id, sellerId);
+  return removeDoc('medicines', id);
 }
 
 async function createInventoryEntry(payload: Dictionary): Promise<SellerMedicine> {
   const traceId = asString(payload.traceId, makeTraceId('inv'));
-  const validation = validateRequiredFields(payload, ['pharmacyId', 'medicineMasterId', 'price', 'stock']);
+  const validation = validateRequiredFields(payload, ['pharmacyId', 'sellerId', 'name', 'description', 'category', 'price', 'stock']);
   if (!validation.ok) {
     logFlow('CREATE_INVENTORY', {
-      expected: ['pharmacyId', 'medicineMasterId', 'price', 'stock'],
+      expected: ['pharmacyId', 'sellerId', 'name', 'description', 'category', 'price', 'stock'],
       received: { missing: validation.missing },
       success: false,
       error: 'missing required fields',
     });
-    throw new Error('pharmacyId and medicineMasterId are required');
+    throw new Error('Please complete all required medicine fields.');
   }
   if (typeof payload.price !== 'number' || payload.price <= 0 || typeof payload.stock !== 'number' || payload.stock < 0) {
     logFlow('CREATE_INVENTORY', {
@@ -793,8 +820,25 @@ async function createInventoryEntry(payload: Dictionary): Promise<SellerMedicine
     });
     throw new Error('price must be > 0 and stock must be >= 0');
   }
-  const id = await createDoc('inventory', {
+  const pharmacyId = asString(payload.pharmacyId);
+  const pharmacies = await getPharmacies({ id: pharmacyId });
+  const pharmacy = pharmacies[0];
+  if (!pharmacy) {
+    logFlow('CREATE_INVENTORY', {
+      expected: ['pharmacy exists'],
+      received: { pharmacyId },
+      success: false,
+      error: 'pharmacy not found',
+    });
+    throw new Error('Cannot create inventory: pharmacy not found.');
+  }
+  const id = await createDoc('medicines', {
     ...payload,
+    medicineName: asString(payload.name),
+    requiresPrescription: asBoolean(payload.rxRequired),
+    imageUrl: asString(payload.image),
+    imagePath: asString(payload.imagePath),
+    isActive: asBoolean(payload.isActive, true),
     traceId,
     createdAt: nowIso(),
     isVisible: asBoolean(payload.isVisible, true),
@@ -802,8 +846,8 @@ async function createInventoryEntry(payload: Dictionary): Promise<SellerMedicine
   });
   logTraceFlow('CREATE_INVENTORY', traceId, { stage: 'WRITE', detail: { inventoryId: id || null } });
   logFlow('CREATE_INVENTORY', {
-    expected: ['inventory record created'],
-    received: { id, medicineMasterId: payload.medicineMasterId, pharmacyId: payload.pharmacyId },
+    expected: ['medicine record created'],
+    received: { id, name: payload.name, pharmacyId: payload.pharmacyId },
     success: Boolean(id),
   });
   return normalizeInventory(id || `inv-${Date.now()}`, {
@@ -829,8 +873,8 @@ async function createOrder(payload: Dictionary): Promise<Order> {
   const pharmacyId = asString(orderPayload.pharmacyId);
   const pharmacies = await getPharmacies({ id: pharmacyId });
   const pharmacy = pharmacies[0];
-  if (!pharmacy || !isPharmacyOperational(pharmacy as Pharmacy & { verificationDetails?: Dictionary })) {
-    throw new Error('Order blocked: pharmacy is not operational.');
+  if (!pharmacy) {
+    throw new Error('Order blocked: pharmacy not found.');
   }
   const inventory = await getInventory({ pharmacyId });
   if (inventory.length === 0) {
@@ -858,8 +902,18 @@ async function createOrder(payload: Dictionary): Promise<Order> {
 }
 
 async function getOrders(filters: FilterOptions = {}): Promise<Order[]> {
-  const orders = await listCollection('orders', normalizeOrder, filters);
-  return [...orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const normalizedFilters = { ...filters };
+  const sellerId = asString(normalizedFilters.sellerId);
+  delete normalizedFilters.sellerId;
+  const orders = await listCollection('orders', normalizeOrder, normalizedFilters);
+  if (!sellerId) {
+    return [...orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  const sellerOrders = orders.filter((order) =>
+    asString(order.sellerId) === sellerId ||
+    (order.items || []).some((item: any) => asString(item?.sellerId) === sellerId),
+  );
+  return [...sellerOrders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 async function getOrderById(id: string): Promise<Order | null> {
@@ -914,7 +968,11 @@ async function updateOrder(id: string, patch: Dictionary): Promise<boolean> {
   return ok;
 }
 
-function subscribeToOrders(filters: FilterOptions, callback: (orders: Order[]) => void): () => void {
+function subscribeToOrders(
+  filters: FilterOptions,
+  callback: (orders: Order[]) => void,
+  onError?: (error: Error) => void,
+): () => void {
   try {
     const constraints: QueryConstraint[] = [];
     for (const [key, value] of Object.entries(filters)) {
@@ -939,23 +997,33 @@ function subscribeToOrders(filters: FilterOptions, callback: (orders: Order[]) =
         });
         callback(orders);
       },
-      () => callback([]),
+      (error) => {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        onError?.(normalizedError);
+        callback([]);
+      },
     );
     return () => unsubscribe();
   } catch (error) {
     handleFirestoreError(error, 'subscribeToOrders');
+    onError?.(error instanceof Error ? error : new Error(String(error)));
     callback([]);
     return () => undefined;
   }
 }
 
-function subscribeToInventory(filters: FilterOptions, callback: (items: SellerMedicine[]) => void): () => void {
+function subscribeToInventory(
+  filters: FilterOptions,
+  callback: (items: SellerMedicine[]) => void,
+  onError?: (error: Error) => void,
+): () => void {
+  // Legacy compatibility stream retained for existing integrations; source is now direct `medicines`.
   try {
     const constraints: QueryConstraint[] = [];
     for (const [key, value] of Object.entries(filters)) {
       if (value !== undefined) constraints.push(where(key, '==', value));
     }
-    const ref = collection(db, 'inventory');
+    const ref = collection(db, 'medicines');
     const source = constraints.length > 0 ? query(ref, ...constraints) : ref;
     const unsubscribe = onSnapshot(
       source,
@@ -968,17 +1036,26 @@ function subscribeToInventory(filters: FilterOptions, callback: (items: SellerMe
         });
         callback(items);
       },
-      () => callback([]),
+      (error) => {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        onError?.(normalizedError);
+        callback([]);
+      },
     );
     return () => unsubscribe();
   } catch (error) {
     handleFirestoreError(error, 'subscribeToInventory');
+    onError?.(error instanceof Error ? error : new Error(String(error)));
     callback([]);
     return () => undefined;
   }
 }
 
-function subscribeToNotifications(filters: FilterOptions, callback: (items: Notification[]) => void): () => void {
+function subscribeToNotifications(
+  filters: FilterOptions,
+  callback: (items: Notification[]) => void,
+  onError?: (error: Error) => void,
+): () => void {
   try {
     const constraints: QueryConstraint[] = [];
     for (const [key, value] of Object.entries(filters)) {
@@ -997,11 +1074,16 @@ function subscribeToNotifications(filters: FilterOptions, callback: (items: Noti
         });
         callback(items);
       },
-      () => callback([]),
+      (error) => {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        onError?.(normalizedError);
+        callback([]);
+      },
     );
     return () => unsubscribe();
   } catch (error) {
     handleFirestoreError(error, 'subscribeToNotifications');
+    onError?.(error instanceof Error ? error : new Error(String(error)));
     callback([]);
     return () => undefined;
   }
@@ -1344,6 +1426,22 @@ function getFallbackByName(name: string): unknown {
   return null;
 }
 
+const CRITICAL_MUTATION_PREFIXES = ['create', 'update', 'delete'];
+const CRITICAL_METHOD_NAMES = new Set([
+  'processPayment',
+  'logPharmacyProfileUpdate',
+  'getOrders',
+  'getOrderById',
+  'getInventory',
+]);
+
+function shouldRethrowApiError(methodName: string): boolean {
+  if (CRITICAL_METHOD_NAMES.has(methodName)) {
+    return true;
+  }
+  return CRITICAL_MUTATION_PREFIXES.some((prefix) => methodName.startsWith(prefix));
+}
+
 export const api = new Proxy(concreteApi as ApiShape, {
   get(target, prop, receiver) {
     const value = Reflect.get(target, prop, receiver);
@@ -1359,6 +1457,9 @@ export const api = new Proxy(concreteApi as ApiShape, {
             success: false,
             error,
           });
+          if (shouldRethrowApiError(String(prop))) {
+            throw error instanceof Error ? error : new Error(String(error));
+          }
           const fallback = getFallbackByName(String(prop));
           return fallback;
         }
