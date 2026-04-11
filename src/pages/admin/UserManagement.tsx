@@ -6,14 +6,10 @@ import {
   MoreVertical, 
   UserPlus, 
   Shield, 
-  Ban, 
-  CheckCircle, 
   Mail, 
   Phone, 
   Download,
   Trash2,
-  Edit2,
-  Eye,
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
@@ -52,16 +48,6 @@ const UserManagement: React.FC = () => {
     }
   };
 
-  const handleToggleStatus = async (userId: string, currentStatus: string) => {
-    const newStatus = currentStatus === 'blocked' ? 'active' : 'blocked';
-    try {
-      const updated = await api.updateUser(userId, { status: newStatus });
-      setUsers(users.map(u => (u.uid || (u as any).id) === userId ? { ...u, ...updated } : u));
-    } catch (error) {
-      console.error('Failed to toggle user status', error);
-    }
-  };
-
   const handleDeleteUser = async (userId: string) => {
     if (!window.confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
     try {
@@ -72,16 +58,13 @@ const UserManagement: React.FC = () => {
     }
   };
 
-  const handleBulkAction = async (action: 'block' | 'unblock' | 'delete') => {
+  const handleBulkAction = async (action: 'delete') => {
     if (selectedUsers.length === 0) return;
     if (!window.confirm(`Are you sure you want to ${action} ${selectedUsers.length} users?`)) return;
 
     if (action === 'delete') {
       await Promise.all(selectedUsers.map((id) => api.deleteUser(id)));
       setUsers(users.filter(u => !selectedUsers.includes(u.uid || (u as any).id)));
-    } else {
-      await Promise.all(selectedUsers.map((id) => api.updateUser(id, { status: action === 'block' ? 'blocked' : 'active' })));
-      await fetchUsers();
     }
     setSelectedUsers([]);
   };
@@ -220,12 +203,6 @@ const UserManagement: React.FC = () => {
             <span className="text-sm text-emerald-700 font-medium">{selectedUsers.length} users selected</span>
             <div className="flex items-center gap-2">
               <button 
-                onClick={() => handleBulkAction('block')}
-                className="px-3 py-1.5 bg-white text-amber-600 text-xs font-bold rounded-lg border border-amber-200 hover:bg-amber-50"
-              >
-                Bulk Block
-              </button>
-              <button 
                 onClick={() => handleBulkAction('delete')}
                 className="px-3 py-1.5 bg-white text-red-600 text-xs font-bold rounded-lg border border-red-200 hover:bg-red-50"
               >
@@ -318,18 +295,6 @@ const UserManagement: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={() => handleToggleStatus(user.uid || (user as any).id, (user as any).status || 'active')}
-                          title={user.status === 'blocked' ? 'Unblock User' : 'Block User'}
-                          className={`p-2 rounded-lg transition-colors ${
-                            user.status === 'blocked' ? 'text-emerald-600 hover:bg-emerald-50' : 'text-amber-600 hover:bg-amber-50'
-                          }`}
-                        >
-                          {user.status === 'blocked' ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
-                        </button>
-                        <button className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
                         <button 
                           onClick={() => handleDeleteUser(user.uid || (user as any).id)}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
