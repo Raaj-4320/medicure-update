@@ -1,77 +1,120 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  FileText, 
-  Search, 
-  Filter, 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  Eye, 
-  Download,
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  FileText,
+  Search,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Eye,
   User,
-  Stethoscope,
   Clock,
-  ChevronRight,
-  ShieldAlert,
-  Zap
+  Loader2,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { Prescription } from '../../types';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
+import { resolveDisplayName } from '../../utils/displayName';
+
+type RxRow = {
+  prescription: Prescription;
+  order: any | null;
+};
+
+const normalizeRxStatus = (status?: string): 'under_review' | 'approved' | 'rejected' => {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'approved') return 'approved';
+  if (normalized === 'rejected') return 'rejected';
+  return 'under_review';
+};
 
 const PrescriptionManagement: React.FC = () => {
   const { profile } = useAuth();
-  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'under_review' | 'approved' | 'rejected'>('all');
+  const [rows, setRows] = useState<RxRow[]>([]);
+  const [filter, setFilter] = useState<'all' | 'under_review' | 'approved' | 'rejected'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRx, setSelectedRx] = useState<Prescription | null>(null);
+  const [selectedRx, setSelectedRx] = useState<RxRow | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
-
-  useEffect(() => {
-    const load = async () => {
-      if (!profile) return;
-      try {
-        await loadPrescriptions();
-      } catch (error: any) {
-        setErrorMessage(error?.message || 'Failed to fetch prescriptions');
-      }
-    };
-    load();
-  }, [profile]);
-
-  const filteredRx = prescriptions.filter(rx => {
-    const matchesFilter = filter === 'all' || rx.status === filter;
-    const matchesSearch = rx.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         rx.customerId.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
-
-  const handleReview = (rx: Prescription) => {
-    setSelectedRx(rx);
-    setIsReviewModalOpen(true);
-  };
 
   const loadPrescriptions = async () => {
     if (!profile) return;
-    const pharmacies = await api.getPharmacies({ ownerId: profile.uid });
-    if (!pharmacies.length) {
-      setErrorMessage('No pharmacy found for this seller account.');
-      setPrescriptions([]);
-      return;
+    setLoading(true);
+    try {
+      const pharmacies = await api.getPharmacies({ ownerId: profile.uid });
+      const pharmacyIds = new Set(pharmacies.map((pharmacy) => pharmacy.id));
+      if (pharmacyIds.size === 0) {
+        setRows([]);
+        setErrorMessage('No pharmacy found for this seller account.');
+        return;
+      }
+
+      setErrorMessage('');
+      const [orders, prescriptions] = await Promise.all([
+        api.getOrders(),
+        api.getPrescriptions(),
+      ]);
+
+      const sellerOrders = orders.filter((order: any) => pharmacyIds.has(order.pharmacyId));
+      const orderById = sellerOrders.reduce<Record<string, any>>((acc, order: any) => {
+        acc[String(order.id)] = order;
+        return acc;
+      }, {});
+
+      const linked = prescriptions
+        .map((prescription) => {
+          const directOrder = prescription.orderId ? orderById[String(prescription.orderId)] : null;
+          const fallbackOrder = sellerOrders.find((order: any) => order.prescriptionId === prescription.id) || null;
+          const resolvedOrder = directOrder || fallbackOrder;
+          if (!resolvedOrder) return null;
+          return {
+            prescription: {
+              ...prescription,
+              status: normalizeRxStatus(prescription.status),
+            } as Prescription,
+            order: resolvedOrder,
+          };
+        })
+        .filter(Boolean) as RxRow[];
+
+      setRows(linked.sort((a, b) => b.prescription.createdAt.localeCompare(a.prescription.createdAt)));
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Failed to fetch prescriptions');
+      setRows([]);
+    } finally {
+      setLoading(false);
     }
-    setErrorMessage('');
-    const data = await api.getPrescriptions({ pharmacyId: pharmacies[0].id });
-    setPrescriptions(data as Prescription[]);
   };
 
-  const updateStatus = async (id: string, status: Prescription['status']) => {
+  useEffect(() => {
+    loadPrescriptions();
+  }, [profile?.uid]);
+
+  const filteredRows = useMemo(() => rows.filter(({ prescription, order }) => {
+    const status = normalizeRxStatus(prescription.status);
+    const matchesFilter = filter === 'all' || status === filter;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return matchesFilter;
+    const medicineNames = (order?.items || []).map((item: any) => String(item.medicineName || item.medicineId || '')).join(' ').toLowerCase();
+    const matchesSearch =
+      prescription.id.toLowerCase().includes(q) ||
+      String(order?.id || '').toLowerCase().includes(q) ||
+      String(order?.customerName || order?.customerId || '').toLowerCase().includes(q) ||
+      medicineNames.includes(q);
+    return matchesFilter && matchesSearch;
+  }), [rows, filter, searchQuery]);
+
+  const updateStatus = async (id: string, status: 'approved' | 'rejected') => {
     setProcessingId(id);
     setErrorMessage('');
     try {
-      await api.updatePrescription(id, { status });
+      await api.updatePrescription(id, {
+        status,
+        reviewedBy: profile?.uid || '',
+        reviewedAt: new Date().toISOString(),
+      });
       await loadPrescriptions();
       setIsReviewModalOpen(false);
     } catch (error: any) {
@@ -86,24 +129,19 @@ const PrescriptionManagement: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Prescription Management</h1>
-          <p className="text-slate-500 text-sm">Verify and approve customer prescriptions</p>
-        </div>
-        <div className="flex items-center gap-2 bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100">
-          <Zap className="w-4 h-4 text-emerald-600" />
-          <span className="text-sm font-bold text-emerald-700">AI OCR Active</span>
+          <p className="text-slate-500 text-sm">Review prescriptions linked to your customer orders</p>
         </div>
       </div>
 
       {errorMessage && <div className="p-3 rounded-xl bg-red-50 text-red-600 text-sm font-medium">{errorMessage}</div>}
 
-      {/* Filters & Search */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input 
+          <input
             type="text"
-            placeholder="Search by Rx ID or Customer..."
-            className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-sm"
+            placeholder="Search by Rx, order, customer, medicine..."
+            className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 outline-none text-sm"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -114,9 +152,9 @@ const PrescriptionManagement: React.FC = () => {
               key={f}
               onClick={() => setFilter(f)}
               className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-                filter === f 
-                ? 'bg-slate-900 text-white shadow-md' 
-                : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                filter === f
+                  ? 'bg-slate-900 text-white shadow-md'
+                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
               }`}
             >
               {f.replace('_', ' ').toUpperCase()}
@@ -125,168 +163,110 @@ const PrescriptionManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Rx Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredRx.map((rx) => (
-          <motion.div
-            layout
-            key={rx.id}
-            className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col"
-          >
-            <div className="relative h-48 bg-slate-100 group">
-              <img src={rx.imageUrl} alt="Prescription" className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <button 
-                  onClick={() => handleReview(rx)}
-                  className="p-2 bg-white rounded-full text-slate-900 shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform"
-                >
-                  <Eye className="w-5 h-5" />
-                </button>
-              </div>
-              <div className={`absolute top-3 right-3 px-2 py-1 rounded-lg text-[10px] font-bold uppercase shadow-sm ${
-                rx.status === 'approved' ? 'bg-emerald-500 text-white' :
-                rx.status === 'rejected' ? 'bg-red-500 text-white' :
-                'bg-amber-500 text-white'
-              }`}>
-                {rx.status.replace('_', ' ')}
-              </div>
-            </div>
-            <div className="p-5 space-y-4 flex-1">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Prescription ID</p>
-                  <h3 className="font-bold text-slate-900">#{rx.id.slice(-8)}</h3>
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /></div>
+      ) : filteredRows.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center">
+          <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+          <h3 className="text-lg font-bold text-slate-900">No prescriptions found</h3>
+          <p className="text-slate-500 text-sm mt-1">Prescriptions uploaded during checkout will appear here.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {filteredRows.map((row) => {
+            const { prescription: rx, order } = row;
+            const status = normalizeRxStatus(rx.status);
+            return (
+              <motion.div key={rx.id} layout className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">Prescription</p>
+                    <p className="font-bold text-slate-900">#{rx.id.slice(-8)}</p>
+                  </div>
+                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${
+                    status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                    status === 'rejected' ? 'bg-red-100 text-red-700' :
+                    'bg-amber-100 text-amber-700'
+                  }`}>{status.replace('_', ' ')}</span>
                 </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date</p>
-                  <p className="text-xs font-medium text-slate-600">{new Date(rx.createdAt).toLocaleDateString()}</p>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center">
-                  <User className="w-4 h-4 text-slate-400" />
+                <div className="text-sm text-slate-600 space-y-1">
+                  <p><span className="font-semibold text-slate-800">Order:</span> #{order?.id}</p>
+                  <p><span className="font-semibold text-slate-800">Customer:</span> {resolveDisplayName({ name: order?.customerName, id: order?.customerId, fallback: order?.customerId || 'Customer' })}</p>
+                  <p><span className="font-semibold text-slate-800">Uploaded:</span> {new Date(rx.createdAt).toLocaleString()}</p>
+                  <p><span className="font-semibold text-slate-800">Medicines:</span> {(order?.items || []).slice(0, 2).map((item: any) => item.medicineName || 'Medicine').join(', ') || '—'}</p>
                 </div>
-                <div>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">Customer</p>
-                  <p className="text-xs font-bold text-slate-900">{rx.customerId}</p>
-                </div>
-              </div>
 
-              {rx.status === 'under_review' ? (
-                <button 
-                  onClick={() => handleReview(rx)}
-                  className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200 flex items-center justify-center gap-2"
-                >
-                  <ShieldAlert className="w-4 h-4" />
-                  Verify Now
-                </button>
-              ) : (
-                <div className="flex items-center justify-center gap-2 py-2.5 bg-slate-50 rounded-xl text-slate-500 text-sm font-bold border border-dashed border-slate-200">
-                  {rx.status === 'approved' ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <XCircle className="w-4 h-4 text-red-500" />}
-                  {rx.status.replace('_', ' ').toUpperCase()}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Review Modal */}
-      <AnimatePresence>
-        {isReviewModalOpen && selectedRx && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col md:flex-row"
-            >
-              {/* Image Preview */}
-              <div className="flex-1 bg-slate-100 p-6 flex items-center justify-center overflow-auto">
-                <img 
-                  src={selectedRx.imageUrl} 
-                  alt="Prescription" 
-                  className="max-w-full h-auto rounded-lg shadow-lg"
-                />
-              </div>
-
-              {/* Review Panel */}
-              <div className="w-full md:w-96 border-l border-slate-100 flex flex-col bg-white">
-                <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                  <h2 className="text-xl font-bold text-slate-900">Verify Rx</h2>
-                  <button 
-                    onClick={() => setIsReviewModalOpen(false)}
-                    className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      if (!rx.imageUrl) {
+                        setErrorMessage('Prescription file URL is missing for this record.');
+                        return;
+                      }
+                      window.open(rx.imageUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold text-slate-700 inline-flex items-center gap-1"
                   >
-                    <XCircle className="w-5 h-5 text-slate-400" />
+                    <Eye className="w-3.5 h-3.5" /> View Prescription
                   </button>
-                </div>
-
-                <div className="p-6 flex-1 overflow-y-auto space-y-6">
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3 text-emerald-600 bg-emerald-50 p-3 rounded-xl border border-emerald-100">
-                      <Zap className="w-5 h-5" />
-                      <div>
-                        <p className="text-xs font-bold uppercase">AI Extraction Results</p>
-                        <p className="text-[10px] font-medium text-emerald-700">Confidence: 94%</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Extracted Medicines</label>
-                      <div className="space-y-2">
-                        {['Augmentin 625 Duo', 'Pan 40'].map((med, i) => (
-                          <div key={i} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
-                            <span className="text-xs font-bold text-slate-700">{med}</span>
-                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Doctor Details</label>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                        <p className="text-xs font-bold text-slate-900">Dr. Arpit Shah</p>
-                        <p className="text-[10px] text-slate-500">Reg No: G-44552 (Verified)</p>
-                      </div>
-                    </div>
-
-                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 flex gap-3">
-                      <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-amber-900">Controlled Drug Warning</p>
-                        <p className="text-[10px] text-amber-700">This prescription contains Schedule H medicines. Ensure quantity matches Rx.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-6 bg-slate-50 border-t border-slate-100 space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <button 
-                      onClick={() => updateStatus(selectedRx.id, 'rejected')}
-                      className="py-3 bg-white border border-red-200 text-red-600 rounded-xl text-sm font-bold hover:bg-red-50 transition-colors"
-                    >
-                      Reject
-                    </button>
-                    <button 
-                      onClick={() => updateStatus(selectedRx.id, 'approved')}
-                      className="py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200"
-                    >
-                      Approve
-                    </button>
-                  </div>
-                  <button className="w-full py-2 text-xs font-bold text-slate-500 hover:text-slate-700 transition-colors">
-                    Request Re-upload
+                  <button
+                    onClick={() => {
+                      setSelectedRx(row);
+                      setIsReviewModalOpen(true);
+                    }}
+                    className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
+                  >
+                    View Order
                   </button>
+                  {status !== 'approved' && (
+                    <button
+                      disabled={processingId === rx.id}
+                      onClick={() => updateStatus(rx.id, 'approved')}
+                      className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold disabled:opacity-50"
+                    >Approve</button>
+                  )}
+                  {status !== 'rejected' && (
+                    <button
+                      disabled={processingId === rx.id}
+                      onClick={() => updateStatus(rx.id, 'rejected')}
+                      className="px-3 py-2 rounded-lg border border-red-200 text-red-600 text-xs font-bold disabled:opacity-50"
+                    >Reject</button>
+                  )}
                 </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+
+      {isReviewModalOpen && selectedRx && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900">Order Linked to Prescription</h3>
+              <button onClick={() => setIsReviewModalOpen(false)} className="text-slate-500 hover:text-slate-700"><XCircle className="w-5 h-5" /></button>
+            </div>
+            <div className="text-sm space-y-2 text-slate-600">
+              <p><span className="font-semibold text-slate-800">Order ID:</span> #{selectedRx.order?.id}</p>
+              <p><span className="font-semibold text-slate-800">Status:</span> {selectedRx.order?.status || 'pending'}</p>
+              <p><span className="font-semibold text-slate-800">Payment:</span> {selectedRx.order?.paymentStatus || 'pending'}</p>
+              <p><span className="font-semibold text-slate-800">Total:</span> ₹{Number(selectedRx.order?.totalAmount || 0).toFixed(2)}</p>
+              <div>
+                <p className="font-semibold text-slate-800 mb-1">Medicines</p>
+                <ul className="space-y-1">
+                  {(selectedRx.order?.items || []).map((item: any, idx: number) => (
+                    <li key={idx} className="text-slate-600">• {item.medicineName || 'Medicine'} x {item.quantity}</li>
+                  ))}
+                </ul>
               </div>
-            </motion.div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button onClick={() => setIsReviewModalOpen(false)} className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700">Close</button>
+            </div>
           </div>
-        )}
-      </AnimatePresence>
+        </div>
+      )}
     </div>
   );
 };

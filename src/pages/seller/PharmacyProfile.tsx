@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../AuthContext';
-import { api, isPharmacyProfileComplete } from '../../services/api';
+import { api, getPharmacyAddressParts, isPharmacyProfileComplete } from '../../services/api';
 import { logUI } from '../../utils/uiLogger';
 import { Pharmacy } from '../../types';
 
@@ -42,6 +42,10 @@ const PharmacyProfile: React.FC = () => {
     phone: '',
     website: '',
     addressLine: '',
+    localArea: '',
+    city: '',
+    state: '',
+    pincode: '',
     mapUrl: '',
     operatingHours: '',
     workingDays: '',
@@ -58,6 +62,7 @@ const PharmacyProfile: React.FC = () => {
         const currentPharmacy = pharmacies[0] || null;
         setPharmacy(currentPharmacy);
         if (currentPharmacy) {
+          const addressParts = getPharmacyAddressParts(currentPharmacy as any);
           setFormData({
             name: currentPharmacy.name || '',
             ownerName: currentPharmacy.verificationDetails?.ownerName || currentPharmacy.ownerName || '',
@@ -65,7 +70,11 @@ const PharmacyProfile: React.FC = () => {
             email: currentPharmacy.email || '',
             phone: currentPharmacy.contactNumber || '',
             website: currentPharmacy.website || '',
-            addressLine: (currentPharmacy.address as any)?.addressLine || '',
+            addressLine: addressParts.addressLine || '',
+            localArea: addressParts.localArea || '',
+            city: addressParts.city || '',
+            state: addressParts.state || '',
+            pincode: addressParts.pincode || '',
             mapUrl: currentPharmacy.mapUrl || '',
             operatingHours: currentPharmacy.operatingHours || '',
             workingDays: currentPharmacy.workingDays || '',
@@ -90,6 +99,21 @@ const PharmacyProfile: React.FC = () => {
     setSaving(true);
     setError('');
     setSuccess('');
+    const shouldValidateAddress = Boolean(
+      formData.addressLine.trim() || formData.localArea.trim() || formData.city.trim() || formData.state.trim() || formData.pincode.trim(),
+    );
+    if (shouldValidateAddress) {
+      if (!formData.localArea.trim() || !formData.city.trim() || !formData.state.trim() || !formData.pincode.trim()) {
+        setError('Please provide Local Area, City, State and Pincode in Store Location.');
+        setSaving(false);
+        return;
+      }
+      if (!/^[A-Za-z0-9 -]{4,10}$/.test(formData.pincode.trim())) {
+        setError('Please enter a valid pincode (4-10 letters/numbers).');
+        setSaving(false);
+        return;
+      }
+    }
     logUI('SELLER_PROFILE_SAVE', {
       component: 'PharmacyProfile',
       action: 'Save Changes click',
@@ -97,7 +121,17 @@ const PharmacyProfile: React.FC = () => {
       status: 'partial',
       diagnostics: { handlerExecuted: true, apiCalled: false },
     });
-    const addressPatch = { ...(pharmacy.address || {}), addressLine: formData.addressLine };
+    const addressPatch = {
+      ...(pharmacy.address || {}),
+      addressLine: formData.addressLine,
+      area: formData.localArea,
+      localArea: formData.localArea,
+      locality: formData.localArea,
+      city: formData.city,
+      state: formData.state,
+      pincode: formData.pincode,
+      zip: formData.pincode,
+    };
     const verificationDetailsPatch = {
       ...(pharmacy.verificationDetails || {}),
       ownerName: formData.ownerName,
@@ -138,6 +172,10 @@ const PharmacyProfile: React.FC = () => {
           phone: pharmacy.contactNumber,
           website: pharmacy.website || '',
           addressLine: (pharmacy.address as any)?.addressLine || '',
+          localArea: (pharmacy.address as any)?.localArea || (pharmacy.address as any)?.area || (pharmacy.address as any)?.locality || '',
+          city: (pharmacy.address as any)?.city || '',
+          state: (pharmacy.address as any)?.state || '',
+          pincode: (pharmacy.address as any)?.pincode || (pharmacy.address as any)?.zip || '',
           mapUrl: pharmacy.mapUrl || '',
           operatingHours: pharmacy.operatingHours,
           workingDays: pharmacy.workingDays || '',
@@ -172,7 +210,7 @@ const PharmacyProfile: React.FC = () => {
 
   const profileStatus = (pharmacy?.status || pharmacy?.verificationStatus || 'pending').toString();
   const isComplete = pharmacy ? isPharmacyProfileComplete(pharmacy as any) : false;
-  const headerLocation = formData.addressLine.split(',')[1]?.trim() || formData.addressLine || 'Address not set';
+  const headerLocation = [formData.localArea, formData.city].filter(Boolean).join(', ') || formData.addressLine || 'Address not set';
   const totalOrders = 0;
 
   const tabs = [
@@ -356,11 +394,18 @@ const PharmacyProfile: React.FC = () => {
                       {isEditing ? (
                         <div className="space-y-2">
                           <input type="text" value={formData.addressLine} onChange={(e) => handleInputChange('addressLine', e.target.value)} placeholder="Store Location / Address" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <input type="text" value={formData.localArea} onChange={(e) => handleInputChange('localArea', e.target.value)} placeholder="Local Area" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
+                            <input type="text" value={formData.city} onChange={(e) => handleInputChange('city', e.target.value)} placeholder="City" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
+                            <input type="text" value={formData.state} onChange={(e) => handleInputChange('state', e.target.value)} placeholder="State" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
+                            <input type="text" value={formData.pincode} onChange={(e) => handleInputChange('pincode', e.target.value)} placeholder="Pincode" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
+                          </div>
                           <input type="text" value={formData.mapUrl} onChange={(e) => handleInputChange('mapUrl', e.target.value)} placeholder="Google Maps Link" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
                         </div>
                       ) : (
                         <>
                           <p className="text-sm font-bold text-slate-900 mb-1">{formData.addressLine}</p>
+                          <p className="text-xs text-slate-500 mb-2">{[formData.localArea, formData.city, formData.state, formData.pincode].filter(Boolean).join(', ') || 'Area details not set'}</p>
                           <a href={formData.mapUrl || '#'} target="_blank" rel="noreferrer" className="text-xs font-bold text-emerald-600 flex items-center gap-1 hover:underline">
                             View on Google Maps
                             <ExternalLink className="w-3 h-3" />
