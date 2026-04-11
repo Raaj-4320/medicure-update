@@ -9,17 +9,19 @@ import {
   ShoppingBag,
   ChevronRight,
   Loader2,
-  Store
+  Store,
+  Pill
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useLocation } from '../../LocationContext';
-import { Pharmacy } from '../../types';
+import { Pharmacy, SellerMedicine } from '../../types';
 import { checkExpectations, validateDataBinding } from '../../utils/flowLogger';
 import { logDataFlow } from '../../utils/dataLogger';
 
 const PharmacyDiscovery: React.FC = () => {
   const { location, setLocation } = useLocation();
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
+  const [pharmacyMedicines, setPharmacyMedicines] = useState<Record<string, SellerMedicine[]>>({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -31,7 +33,15 @@ const PharmacyDiscovery: React.FC = () => {
       }
 
       try {
-        const allPharmacies = await api.getPharmaciesForCustomer();
+        const [allPharmacies, inventory] = await Promise.all([api.getPharmaciesForCustomer(), api.getInventory({})]);
+        const inventoryByPharmacy = inventory.reduce<Record<string, SellerMedicine[]>>((acc, item) => {
+          if (item.isVisible === false) return acc;
+          const pharmacyId = item.pharmacyId;
+          if (!pharmacyId) return acc;
+          if (!acc[pharmacyId]) acc[pharmacyId] = [];
+          acc[pharmacyId].push(item);
+          return acc;
+        }, {});
         const filteredByLocation = allPharmacies.filter((pharmacy) => {
           const city = (pharmacy.address?.city || '').toLowerCase();
           const area = (pharmacy.address?.area || '').toLowerCase();
@@ -40,9 +50,32 @@ const PharmacyDiscovery: React.FC = () => {
           const selectedArea = (location?.area || '').toLowerCase();
           const selectedPincode = (location?.pincode || '').toLowerCase();
           if (!selectedCity && !selectedArea && !selectedPincode) return true;
-          return city === selectedCity || area === selectedArea || pincode === selectedPincode;
+          return (
+            city === selectedCity ||
+            area === selectedArea ||
+            pincode === selectedPincode ||
+            city.includes(selectedCity) ||
+            selectedCity.includes(city) ||
+            area.includes(selectedArea) ||
+            selectedArea.includes(area)
+          );
         });
-        setPharmacies(filteredByLocation);
+        const resolvedByLocation = filteredByLocation.length > 0 ? filteredByLocation : allPharmacies;
+        console.info('[DISCOVER_COUNTS]', {
+          pharmaciesFetched: allPharmacies.length,
+          inventoryFetched: inventory.length,
+          pharmaciesAfterLocationFilter: filteredByLocation.length,
+          pharmaciesAfterFallback: resolvedByLocation.length,
+        });
+        resolvedByLocation.forEach((pharmacy) => {
+          console.info('[DISCOVER_PHARMACY_MEDICINE_COUNT]', {
+            pharmacyId: pharmacy.id,
+            pharmacyName: pharmacy.name,
+            medicineCount: (inventoryByPharmacy[pharmacy.id] || []).length,
+          });
+        });
+        setPharmacies(resolvedByLocation);
+        setPharmacyMedicines(inventoryByPharmacy);
         checkExpectations({
           page: 'Customer',
           expected: ['pharmacies'],
@@ -52,8 +85,8 @@ const PharmacyDiscovery: React.FC = () => {
           source: 'FIRESTORE',
           requested: ['pharmacies'],
           received: filteredByLocation,
-          rendered: filteredByLocation.length > 0,
-          placeholder: filteredByLocation.length === 0,
+          rendered: resolvedByLocation.length > 0,
+          placeholder: resolvedByLocation.length === 0,
           requiredFields: ['id', 'name'],
           route: '/customer/pharmacies',
           filters: { location: location?.city || 'unknown', query: searchQuery || '' },
@@ -147,27 +180,46 @@ const PharmacyDiscovery: React.FC = () => {
               to={`/pharmacy/${pharmacy.id}`}
               className="group bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-all"
             >
-              <div className="h-48 relative overflow-hidden">
-                <img 
-                  src={pharmacy.image || undefined} 
-                  alt={pharmacy.name} 
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
-                <div className="absolute top-4 right-4 px-2 py-1 bg-white/90 backdrop-blur rounded-lg flex items-center gap-1 text-xs font-bold text-slate-900">
-                  <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
-                  {pharmacy.rating.toFixed(1)}
+              <div className="p-5">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <h3 className="text-lg font-bold text-slate-900 group-hover:text-emerald-600 transition-colors">{pharmacy.name || 'Profile Incomplete'}</h3>
+                  <div className="px-2 py-1 bg-slate-50 rounded-lg flex items-center gap-1 text-xs font-bold text-slate-900 shrink-0">
+                    <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                    {pharmacy.rating.toFixed(1)}
+                  </div>
                 </div>
+                <p className="text-sm text-slate-500 mb-4 line-clamp-1">{pharmacy.description}</p>
+                <p className="text-xs text-slate-500 mb-3">
+                  {(pharmacy.address?.area || 'Area not set')}, {(pharmacy.address?.city || 'City not set')}
+                </p>
                 {pharmacy.deliveryAvailable && (
-                  <div className="absolute bottom-4 left-4 px-2 py-1 bg-emerald-600 text-white rounded-lg flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider">
+                  <div className="inline-flex mb-4 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg items-center gap-1 text-[10px] font-bold uppercase tracking-wider border border-emerald-100">
                     <Truck className="w-3 h-3" />
                     Fast Delivery
                   </div>
                 )}
-              </div>
-              
-              <div className="p-5">
-                <h3 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-emerald-600 transition-colors">{pharmacy.name || 'Profile Incomplete'}</h3>
-                <p className="text-sm text-slate-500 mb-4 line-clamp-1">{pharmacy.description}</p>
+
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Medicines</span>
+                    <span className="text-[11px] font-semibold text-slate-500">{(pharmacyMedicines[pharmacy.id] || []).length}</span>
+                  </div>
+                  {(pharmacyMedicines[pharmacy.id] || []).length > 0 ? (
+                    <div className="space-y-1.5">
+                      {(pharmacyMedicines[pharmacy.id] || []).slice(0, 3).map((medicine) => (
+                        <div key={medicine.id} className="flex items-center justify-between text-xs">
+                          <span className="text-slate-700 line-clamp-1 flex items-center gap-1">
+                            <Pill className="w-3 h-3 text-slate-400" />
+                            {medicine.name || 'Medicine'}
+                          </span>
+                          <span className="font-semibold text-emerald-700">₹{Number(medicine.discountPrice || medicine.price || 0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400">No listed medicines.</p>
+                  )}
+                </div>
                 
                 <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                   <div className="flex items-center gap-4">

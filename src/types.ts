@@ -206,6 +206,8 @@ export interface Order {
   deliveryAddress: Partial<Address>;
   orderType: 'delivery' | 'pickup';
   prescriptionId?: string;
+  prescriptionUrl?: string;
+  requiresPrescription?: boolean;
   createdAt: string;
   updatedAt: string;
   // Joined data
@@ -233,10 +235,14 @@ export interface Prescription {
   id: string;
   customerId: string;
   orderId?: string;
+  pharmacyId?: string;
+  sellerId?: string;
   imageUrl: string;
   status: 'pending' | 'under_review' | 'approved' | 'rejected' | 'clarification_required';
   pharmacistId?: string;
   remarks?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
   createdAt: string;
 }
 

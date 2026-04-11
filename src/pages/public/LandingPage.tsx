@@ -20,6 +20,7 @@ import { useAuth } from '../../AuthContext';
 import { api } from '../../services/api';
 import { Pharmacy, SellerMedicine } from '../../types';
 import { parseStoredCart } from '../../utils/safeCart';
+import { getWishlistStorageKey, readWishlistIds, writeWishlistIds } from '../../utils/wishlist';
 
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -80,7 +81,7 @@ const LandingPage: React.FC = () => {
   }, []);
 
   const hasMarketItems = useMemo(() => marketItems.length > 0, [marketItems.length]);
-  const wishlistKey = useMemo(() => `explore_wishlist_${profile?.uid || 'guest'}`, [profile?.uid]);
+  const wishlistKey = useMemo(() => getWishlistStorageKey(profile?.uid), [profile?.uid]);
   const isLoggedInCustomer = Boolean(user && profile?.role === 'customer');
 
   useEffect(() => {
@@ -91,8 +92,7 @@ const LandingPage: React.FC = () => {
 
   useEffect(() => {
     try {
-      const parsed = parseStoredCart(localStorage.getItem(wishlistKey), 'LandingPage wishlist');
-      setWishlist(parsed.filter((id): id is string => typeof id === 'string'));
+      setWishlist(readWishlistIds(wishlistKey, 'LandingPage wishlist'));
     } catch (error) {
       console.warn('Failed to load wishlist on landing', error);
       setWishlist([]);
@@ -154,8 +154,7 @@ const LandingPage: React.FC = () => {
   const toggleWishlist = (medicineId: string) => {
     setWishlist((prev) => {
       const next = prev.includes(medicineId) ? prev.filter((id) => id !== medicineId) : [...prev, medicineId];
-      localStorage.setItem(wishlistKey, JSON.stringify(next));
-      return next;
+      return writeWishlistIds(wishlistKey, next);
     });
   };
 
