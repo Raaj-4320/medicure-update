@@ -225,6 +225,8 @@ function normalizeOrder(id: string, data: DocumentData): Order {
     deliveryAddress: toDictionary(source.deliveryAddress) as Order['deliveryAddress'],
     orderType: (asString(source.orderType, 'delivery') as Order['orderType']) ?? 'delivery',
     prescriptionId: asString(source.prescriptionId),
+    prescriptionUrl: asString(source.prescriptionUrl),
+    requiresPrescription: asBoolean(source.requiresPrescription, Boolean(source.prescriptionId || source.prescriptionUrl)),
     createdAt: asString(source.createdAt, nowIso()),
     updatedAt: asString(source.updatedAt, nowIso()),
     items: Array.isArray(source.items) ? (source.items as Order['items']) : [],
@@ -239,14 +241,21 @@ function normalizeOrder(id: string, data: DocumentData): Order {
 
 function normalizePrescription(id: string, data: DocumentData): Prescription {
   const source = toDictionary(data);
+  const rawStatus = asString(source.status, 'under_review').toLowerCase();
+  const normalizedStatus =
+    rawStatus === 'pending' ? 'under_review' : rawStatus;
   return {
     id,
     customerId: asString(source.customerId || source.userId),
     orderId: asString(source.orderId),
+    pharmacyId: asString(source.pharmacyId),
+    sellerId: asString(source.sellerId || source.ownerId),
     imageUrl: asString(source.imageUrl),
-    status: (asString(source.status, 'pending') as Prescription['status']) ?? 'pending',
+    status: (normalizedStatus as Prescription['status']) ?? 'under_review',
     pharmacistId: asString(source.pharmacistId),
     remarks: asString(source.remarks),
+    reviewedBy: asString(source.reviewedBy),
+    reviewedAt: asString(source.reviewedAt),
     createdAt: asString(source.createdAt, nowIso()),
   };
 }
@@ -1194,6 +1203,9 @@ async function createPrescription(payload: Dictionary): Promise<Prescription> {
   const rxPayload: Dictionary = {
     ...payload,
     customerId: asString(payload.customerId || payload.userId),
+    pharmacyId: asString(payload.pharmacyId),
+    sellerId: asString(payload.sellerId || payload.ownerId),
+    status: asString(payload.status, 'under_review'),
     createdAt: nowIso(),
   };
   const id = await createDoc('prescriptions', rxPayload);
@@ -1263,6 +1275,25 @@ async function getPayouts(filters: FilterOptions = {}): Promise<SellerPayout[]> 
 
 async function updatePayout(id: string, patch: Dictionary): Promise<boolean> {
   return patchDoc('payouts', id, { ...patch, updatedAt: nowIso() });
+}
+
+async function createPayout(payload: Dictionary): Promise<SellerPayout> {
+  const payoutPayload: Dictionary = {
+    ...payload,
+    pharmacyId: asString(payload.pharmacyId),
+    amount: asNumber(payload.amount),
+    commission: asNumber(payload.commission),
+    gst: asNumber(payload.gst),
+    netAmount: asNumber(payload.netAmount),
+    status: asString(payload.status, 'pending'),
+    bankAccount: asString(payload.bankAccount),
+    periodStart: asString(payload.periodStart, nowIso()),
+    periodEnd: asString(payload.periodEnd, nowIso()),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  const id = await createDoc('payouts', payoutPayload);
+  return normalizePayout(id || `payout-${Date.now()}`, payoutPayload);
 }
 
 async function getCompliance(filters: FilterOptions = {}): Promise<ComplianceDocument[]> {
@@ -1498,6 +1529,7 @@ const concreteApi = {
 
   // finance + compliance + analytics
   getPayouts,
+  createPayout,
   updatePayout,
   getCompliance,
   createCompliance,

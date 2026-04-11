@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, Eye, Heart, Search, ShoppingBag, User } from 'lucide-react';
+import { AlertCircle, Eye, Heart, Search, ShoppingBag } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { api } from '../../services/api';
 import { Pharmacy, SellerMedicine } from '../../types';
 import { parseStoredCart } from '../../utils/safeCart';
+import { getWishlistStorageKey, readWishlistIds, writeWishlistIds } from '../../utils/wishlist';
 import { resolveDisplayName } from '../../utils/displayName';
+import PublicExploreHeader from '../../components/public/PublicExploreHeader';
 
 const ExploreProducts: React.FC = () => {
   const navigate = useNavigate();
@@ -23,7 +25,7 @@ const ExploreProducts: React.FC = () => {
   const [inStockOnly, setInStockOnly] = useState(false);
 
   const isLoggedInCustomer = Boolean(user && profile?.role === 'customer');
-  const wishlistKey = useMemo(() => `explore_wishlist_${profile?.uid || 'guest'}`, [profile?.uid]);
+  const wishlistKey = useMemo(() => getWishlistStorageKey(profile?.uid), [profile?.uid]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -56,8 +58,7 @@ const ExploreProducts: React.FC = () => {
 
   useEffect(() => {
     try {
-      const parsed = parseStoredCart(localStorage.getItem(wishlistKey), 'ExploreProducts wishlist');
-      setWishlist(parsed.filter((id): id is string => typeof id === 'string'));
+      setWishlist(readWishlistIds(wishlistKey, 'ExploreProducts wishlist'));
     } catch (error) {
       console.warn('Failed to parse explore wishlist', error);
       setWishlist([]);
@@ -157,8 +158,7 @@ const ExploreProducts: React.FC = () => {
   const toggleWishlist = (medicineId: string) => {
     setWishlist((prev) => {
       const next = prev.includes(medicineId) ? prev.filter((id) => id !== medicineId) : [...prev, medicineId];
-      localStorage.setItem(wishlistKey, JSON.stringify(next));
-      return next;
+      return writeWishlistIds(wishlistKey, next);
     });
   };
 
@@ -168,52 +168,15 @@ const ExploreProducts: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <nav className="h-20 border-b border-slate-100 bg-white flex items-center justify-between px-6 md:px-12 gap-4 sticky top-0 z-40">
-        <Link to="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-emerald-100">M</div>
-          <span className="font-bold text-2xl text-slate-900 tracking-tight">MedSmart</span>
-        </Link>
-
-        <div className="hidden md:flex items-center gap-3 max-w-xl flex-1">
-          <Search className="w-4 h-4 text-slate-400" />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search medicines, category, description, seller..."
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              navigate('/wishlist');
-            }}
-            className="relative p-2 rounded-xl border border-slate-200 text-slate-600"
-            title="Wishlist"
-          >
-            <Heart className="w-5 h-5" />
-            {wishlist.length > 0 && <span className="absolute -top-2 -right-2 text-[10px] bg-rose-500 text-white rounded-full px-1.5">{wishlist.length}</span>}
-          </button>
-          <button
-            onClick={() => {
-              navigate('/cart');
-            }}
-            className="relative p-2 rounded-xl border border-slate-200 text-slate-600"
-            title="Cart"
-          >
-            <ShoppingBag className="w-5 h-5" />
-            {cartCount > 0 && <span className="absolute -top-2 -right-2 text-[10px] bg-emerald-600 text-white rounded-full px-1.5">{cartCount}</span>}
-          </button>
-          <button
-            onClick={() => navigate(isLoggedInCustomer ? '/dashboard' : '/login', isLoggedInCustomer ? undefined : { state: { returnTo: '/exploreproducts' } })}
-            className="p-2 rounded-xl border border-slate-200 text-slate-600"
-            title="Account"
-          >
-            <User className="w-5 h-5" />
-          </button>
-        </div>
-      </nav>
+      <PublicExploreHeader
+        wishlistCount={wishlist.length}
+        cartCount={cartCount}
+        isLoggedInCustomer={isLoggedInCustomer}
+        accountReturnTo="/exploreproducts"
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        searchMode="active"
+      />
 
       <main className="max-w-7xl mx-auto py-10 px-6 md:px-12">
         <div className="mb-6 flex md:hidden items-center gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2">

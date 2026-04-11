@@ -171,7 +171,8 @@ export default function CheckoutPage() {
           customerId,
           userId: customerId,
           pharmacyId: checkoutPharmacyId,
-          status: 'pending',
+          sellerId: sellerLinkId,
+          status: 'under_review',
           imageUrl: prescriptionUrl,
           storagePath: prescriptionRef.fullPath,
           fileName: prescriptionMeta.fileName,
@@ -218,6 +219,7 @@ export default function CheckoutPage() {
         paymentId: paymentResponse.paymentId,
         paymentRecordId: paymentResponse.paymentId,
         transactionReference: paymentResponse.transactionId,
+        requiresPrescription,
         prescriptionId,
         prescriptionUrl: uploadedPrescriptionUrl
       };
@@ -226,6 +228,16 @@ export default function CheckoutPage() {
       console.info('[CHECKOUT] order create started');
       const order = await api.createOrder(orderData);
       console.info('[CHECKOUT] order create success', { orderId: order.id });
+      if (prescriptionId) {
+        void api.updatePrescription(prescriptionId, {
+          orderId: order.id,
+          pharmacyId: checkoutPharmacyId,
+          sellerId: sellerLinkId,
+          status: 'under_review',
+        }).catch((rxLinkError) => {
+          console.error('[CHECKOUT] prescription link update failed', rxLinkError);
+        });
+      }
       if (paymentResponse.paymentId) {
         void api.updatePayment(paymentResponse.paymentId, {
           orderId: order.id,
