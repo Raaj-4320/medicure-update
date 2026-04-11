@@ -603,26 +603,38 @@ async function getPharmacies(filters: FilterOptions = {}): Promise<Pharmacy[]> {
 }
 
 async function getPharmaciesForCustomer(): Promise<Pharmacy[]> {
-  const verifiedPharmacies = await getPharmacies({ status: 'verified' });
+  const allPharmacies = await getPharmacies({});
   const visibilityChecks = await Promise.all(
-    verifiedPharmacies.map(async (pharmacy) => {
+    allPharmacies.map(async (pharmacy) => {
       const inventory = await getInventory({ pharmacyId: pharmacy.id });
+      const status = asString(pharmacy.status || pharmacy.verificationStatus).toLowerCase();
+      const isRejected = status === 'rejected';
+      const hasIdentity = Boolean(pharmacy.id) && Boolean(pharmacy.name);
+      const hasInventory = inventory.length > 0;
+      if (!hasInventory || !hasIdentity || isRejected) {
+        console.info('[DISCOVER_FILTERED_OUT]', {
+          pharmacyId: pharmacy.id,
+          hasInventory,
+          hasIdentity,
+          status: status || 'unknown',
+        });
+      }
       return {
         pharmacy,
         inventoryCount: inventory.length,
-        isComplete: isPharmacyOperational(pharmacy as Pharmacy & { verificationDetails?: Dictionary }),
+        isVisible: hasInventory && hasIdentity && !isRejected,
       };
     }),
   );
   const visiblePharmacies = visibilityChecks
-    .filter((entry) => entry.inventoryCount > 0 && entry.isComplete)
+    .filter((entry) => entry.isVisible)
     .map((entry) => entry.pharmacy);
   logFlow('GET_PHARMACIES_FOR_CUSTOMER', {
-    expected: ['verified pharmacy with complete profile and inventory > 0'],
-    received: { count: visiblePharmacies.length, sourceCount: verifiedPharmacies.length },
+    expected: ['pharmacy has id/name and inventory > 0 and is not rejected'],
+    received: { count: visiblePharmacies.length, sourceCount: allPharmacies.length },
     status: visiblePharmacies.length > 0 ? 'success' : 'partial',
     partialType: visiblePharmacies.length > 0 ? undefined : 'DATA_MISSING',
-    suggestion: 'Add inventory and complete profile details for verified pharmacies.',
+    suggestion: 'Ensure pharmacy has inventory and is not rejected.',
   });
   return visiblePharmacies;
 }
@@ -759,6 +771,36 @@ async function updateMedicine(id: string, patch: Dictionary): Promise<boolean> {
   return patchDoc('medicine_master', id, { ...patch, updatedAt: nowIso() });
 }
 
+async function setMedicineCatalogBlockState(id: string, blocked: boolean): Promise<boolean> {
+  const patchPayload: Dictionary = {
+    isVisible: !blocked,
+    status: blocked ? 'blocked' : 'active',
+    updatedAt: nowIso(),
+  };
+
+  try {
+    const directMedicine = await getDoc(doc(db, 'medicines', id));
+    if (directMedicine.exists()) {
+      return patchDoc('medicines', id, patchPayload);
+    }
+
+    const legacyInventory = await getDoc(doc(db, 'inventory', id));
+    if (legacyInventory.exists()) {
+      return patchDoc('inventory', id, patchPayload);
+    }
+
+    const masterMedicine = await getDoc(doc(db, 'medicine_master', id));
+    if (masterMedicine.exists()) {
+      return patchDoc('medicine_master', id, { status: blocked ? 'blocked' : 'approved', updatedAt: nowIso() });
+    }
+  } catch (error) {
+    handleFirestoreError(error, 'setMedicineCatalogBlockState');
+    return false;
+  }
+
+  return false;
+}
+
 async function getInventory(filters: FilterOptions = {}): Promise<SellerMedicine[]> {
   const directMedicines = await listCollection('medicines', normalizeInventory, filters);
   const validInventory = directMedicines.filter((item) => {
@@ -772,7 +814,66 @@ async function getInventory(filters: FilterOptions = {}): Promise<SellerMedicine
     }
     return isValid;
   });
-  return validInventory;
+  const legacyInventory = await listCollection('inventory', normalizeInventory, filters);
+  let medicineMasterMap: Record<string, MedicineMaster> = {};
+
+  if (legacyInventory.some((item) => !item.name && item.medicineMasterId)) {
+    const medicineMaster = await getMedicines({});
+    medicineMasterMap = medicineMaster.reduce<Record<string, MedicineMaster>>((acc, med) => {
+      acc[med.id] = med;
+      return acc;
+    }, {});
+  }
+
+  const legacyNormalized = legacyInventory
+    .map((item) => {
+      const master = item.medicineMasterId ? medicineMasterMap[item.medicineMasterId] : undefined;
+      return {
+        ...item,
+        name: item.name || master?.brandName || master?.genericName || 'Medicine',
+        category: item.category || master?.category || 'General',
+        description: item.description || master?.description || '',
+        image: item.image || master?.image || '',
+        rxRequired: typeof item.rxRequired === 'boolean' ? item.rxRequired : Boolean(master?.rxRequired),
+      };
+    })
+    .filter((item) => Boolean(item.pharmacyId) && Boolean(item.name) && typeof item.price === 'number' && typeof item.stock === 'number');
+
+  const merged = [...validInventory];
+  legacyNormalized.forEach((item) => {
+    if (!merged.some((entry) => entry.id === item.id)) {
+      merged.push(item);
+    }
+  });
+
+  const dedupeKey = (item: SellerMedicine): string => {
+    if (asString(item.id)) return `id:${asString(item.id)}`;
+    const pharmacyId = asString(item.pharmacyId);
+    const medicineId = asString(item.medicineMasterId);
+    if (pharmacyId && medicineId) return `pm:${pharmacyId}:${medicineId}`;
+    const normalizedName = asString(item.name).trim().toLowerCase();
+    if (pharmacyId && normalizedName) return `pn:${pharmacyId}:${normalizedName}`;
+    return `fallback:${pharmacyId}:${normalizedName}:${asNumber(item.price)}:${asNumber(item.stock)}`;
+  };
+  const seen = new Set<string>();
+  const deduped = merged.filter((item) => {
+    const key = dedupeKey(item);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+
+  console.info('[DISCOVER_INVENTORY_COUNTS]', {
+    direct: validInventory.length,
+    legacy: legacyNormalized.length,
+    merged: merged.length,
+    deduped: deduped.length,
+    filters,
+  });
+
+  return deduped;
 }
 
 async function assertMedicineOwner(id: string, sellerId?: string): Promise<void> {
@@ -1367,6 +1468,7 @@ const concreteApi = {
   getMedicines,
   createMedicine,
   updateMedicine,
+  setMedicineCatalogBlockState,
   getInventory,
   createInventoryEntry,
   updateInventory,

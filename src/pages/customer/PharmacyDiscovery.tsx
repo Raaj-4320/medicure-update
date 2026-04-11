@@ -9,17 +9,19 @@ import {
   ShoppingBag,
   ChevronRight,
   Loader2,
-  Store
+  Store,
+  Pill
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useLocation } from '../../LocationContext';
-import { Pharmacy } from '../../types';
+import { Pharmacy, SellerMedicine } from '../../types';
 import { checkExpectations, validateDataBinding } from '../../utils/flowLogger';
 import { logDataFlow } from '../../utils/dataLogger';
 
 const PharmacyDiscovery: React.FC = () => {
   const { location, setLocation } = useLocation();
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
+  const [pharmacyMedicines, setPharmacyMedicines] = useState<Record<string, SellerMedicine[]>>({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -31,7 +33,15 @@ const PharmacyDiscovery: React.FC = () => {
       }
 
       try {
-        const allPharmacies = await api.getPharmaciesForCustomer();
+        const [allPharmacies, inventory] = await Promise.all([api.getPharmaciesForCustomer(), api.getInventory({})]);
+        const inventoryByPharmacy = inventory.reduce<Record<string, SellerMedicine[]>>((acc, item) => {
+          if (item.isVisible === false) return acc;
+          const pharmacyId = item.pharmacyId;
+          if (!pharmacyId) return acc;
+          if (!acc[pharmacyId]) acc[pharmacyId] = [];
+          acc[pharmacyId].push(item);
+          return acc;
+        }, {});
         const filteredByLocation = allPharmacies.filter((pharmacy) => {
           const city = (pharmacy.address?.city || '').toLowerCase();
           const area = (pharmacy.address?.area || '').toLowerCase();
@@ -42,7 +52,20 @@ const PharmacyDiscovery: React.FC = () => {
           if (!selectedCity && !selectedArea && !selectedPincode) return true;
           return city === selectedCity || area === selectedArea || pincode === selectedPincode;
         });
+        console.info('[DISCOVER_COUNTS]', {
+          pharmaciesFetched: allPharmacies.length,
+          inventoryFetched: inventory.length,
+          pharmaciesAfterLocationFilter: filteredByLocation.length,
+        });
+        filteredByLocation.forEach((pharmacy) => {
+          console.info('[DISCOVER_PHARMACY_MEDICINE_COUNT]', {
+            pharmacyId: pharmacy.id,
+            pharmacyName: pharmacy.name,
+            medicineCount: (inventoryByPharmacy[pharmacy.id] || []).length,
+          });
+        });
         setPharmacies(filteredByLocation);
+        setPharmacyMedicines(inventoryByPharmacy);
         checkExpectations({
           page: 'Customer',
           expected: ['pharmacies'],
@@ -168,6 +191,31 @@ const PharmacyDiscovery: React.FC = () => {
               <div className="p-5">
                 <h3 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-emerald-600 transition-colors">{pharmacy.name || 'Profile Incomplete'}</h3>
                 <p className="text-sm text-slate-500 mb-4 line-clamp-1">{pharmacy.description}</p>
+                <p className="text-xs text-slate-500 mb-3">
+                  {(pharmacy.address?.area || 'Area not set')}, {(pharmacy.address?.city || 'City not set')}
+                </p>
+
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Medicines</span>
+                    <span className="text-[11px] font-semibold text-slate-500">{(pharmacyMedicines[pharmacy.id] || []).length}</span>
+                  </div>
+                  {(pharmacyMedicines[pharmacy.id] || []).length > 0 ? (
+                    <div className="space-y-1.5">
+                      {(pharmacyMedicines[pharmacy.id] || []).slice(0, 3).map((medicine) => (
+                        <div key={medicine.id} className="flex items-center justify-between text-xs">
+                          <span className="text-slate-700 line-clamp-1 flex items-center gap-1">
+                            <Pill className="w-3 h-3 text-slate-400" />
+                            {medicine.name || 'Medicine'}
+                          </span>
+                          <span className="font-semibold text-emerald-700">₹{Number(medicine.discountPrice || medicine.price || 0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400">No listed medicines.</p>
+                  )}
+                </div>
                 
                 <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                   <div className="flex items-center gap-4">
