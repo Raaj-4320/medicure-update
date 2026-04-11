@@ -5,6 +5,7 @@ import { useAuth } from '../../AuthContext';
 import { api } from '../../services/api';
 import { Pharmacy, SellerMedicine } from '../../types';
 import { parseStoredCart } from '../../utils/safeCart';
+import { getWishlistStorageKey, readWishlistIds, writeWishlistIds } from '../../utils/wishlist';
 import { resolveDisplayName } from '../../utils/displayName';
 
 const PublicProductDetailPage: React.FC = () => {
@@ -18,13 +19,12 @@ const PublicProductDetailPage: React.FC = () => {
   const [recentlyViewed, setRecentlyViewed] = useState<SellerMedicine[]>([]);
 
   const isLoggedInCustomer = Boolean(user && profile?.role === 'customer');
-  const wishlistKey = `explore_wishlist_${profile?.uid || 'guest'}`;
+  const wishlistKey = getWishlistStorageKey(profile?.uid);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
 
   useEffect(() => {
     try {
-      const parsed = parseStoredCart(localStorage.getItem(wishlistKey), 'PublicProductDetailPage wishlist');
-      setWishlistIds(parsed.filter((id): id is string => typeof id === 'string'));
+      setWishlistIds(readWishlistIds(wishlistKey, 'PublicProductDetailPage wishlist'));
     } catch {
       setWishlistIds([]);
     }
@@ -107,8 +107,7 @@ const PublicProductDetailPage: React.FC = () => {
   const toggleWishlist = () => {
     if (!item) return;
     const next = wishlistIds.includes(item.id) ? wishlistIds.filter((id) => id !== item.id) : [...wishlistIds, item.id];
-    setWishlistIds(next);
-    localStorage.setItem(wishlistKey, JSON.stringify(next));
+    setWishlistIds(writeWishlistIds(wishlistKey, next));
   };
 
   if (loading) return <div className="min-h-screen bg-slate-50 p-6 text-slate-500">Loading product details…</div>;
