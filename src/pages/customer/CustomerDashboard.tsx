@@ -14,13 +14,28 @@ import {
 import { useAuth } from '../../AuthContext';
 import { useLocation } from '../../LocationContext';
 import { Order, Pharmacy } from '../../types';
-import { api } from '../../services/api';
+import { api, getPharmacyAddressParts } from '../../services/api';
+
+interface LocationOption {
+  key: string;
+  area: string;
+  city: string;
+  state: string;
+  pincode: string;
+  label: string;
+  pharmacyCount: number;
+}
+
+const normalizeText = (value?: string) => (value || '').trim().toLowerCase();
 
 const CustomerDashboard: React.FC = () => {
   const { profile } = useAuth();
   const { location, setLocation } = useLocation();
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [nearbyPharmacies, setNearbyPharmacies] = useState<Pharmacy[]>([]);
+  const [allCustomerPharmacies, setAllCustomerPharmacies] = useState<Pharmacy[]>([]);
+  const [locationOptions, setLocationOptions] = useState<LocationOption[]>([]);
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,11 +45,52 @@ const CustomerDashboard: React.FC = () => {
       const recent = await api.getOrders({ customerId: profile.uid });
       setRecentOrders(recent.slice(0, 3) as any);
       const customerVisiblePharmacies = await api.getPharmaciesForCustomer();
+      setAllCustomerPharmacies(customerVisiblePharmacies);
+      const optionsMap = customerVisiblePharmacies.reduce<Record<string, LocationOption>>((acc, pharmacy) => {
+        const addressParts = getPharmacyAddressParts(pharmacy as any);
+        const area = addressParts.localArea.trim();
+        const city = addressParts.city.trim();
+        const state = addressParts.state.trim();
+        const pincode = addressParts.pincode.trim();
+        const fallbackAddress = (addressParts.addressLine || (pharmacy.address as any)?.addressLine || '').trim();
+        const fallbackArea = area || fallbackAddress;
+        const fallbackCity = city || pharmacy.address?.city || '';
+        if (!fallbackArea && !fallbackCity && !pincode) return acc;
+        const key = `${normalizeText(fallbackArea)}|${normalizeText(fallbackCity)}|${normalizeText(state)}|${normalizeText(pincode)}`;
+        if (!key.replace(/\|/g, '')) return acc;
+        if (!acc[key]) {
+          const locationLabel = [fallbackArea, fallbackCity].filter(Boolean).join(', ') || pincode;
+          acc[key] = {
+            key,
+            area: fallbackArea,
+            city: fallbackCity,
+            state,
+            pincode,
+            label: locationLabel || 'Unnamed location',
+            pharmacyCount: 0,
+          };
+        }
+        acc[key].pharmacyCount += 1;
+        return acc;
+      }, {});
+      setLocationOptions(
+        Object.values(optionsMap).sort((a, b) => {
+          if (b.pharmacyCount !== a.pharmacyCount) return b.pharmacyCount - a.pharmacyCount;
+          return a.label.localeCompare(b.label);
+        }),
+      );
       const filtered = customerVisiblePharmacies.filter((pharmacy) => {
         if (!location) return true;
-        const city = (pharmacy.address?.city || '').toLowerCase();
-        const area = (pharmacy.address?.area || '').toLowerCase();
-        return city === location.city.toLowerCase() || area === location.area.toLowerCase();
+        const addressParts = getPharmacyAddressParts(pharmacy as any);
+        const selectedArea = normalizeText(location.area);
+        const selectedCity = normalizeText(location.city);
+        const selectedPincode = normalizeText(location.pincode);
+        const pharmacyArea = normalizeText(addressParts.localArea || pharmacy.address?.area || pharmacy.address?.locality || '');
+        const pharmacyCity = normalizeText(addressParts.city || pharmacy.address?.city || '');
+        const pharmacyPincode = normalizeText(addressParts.pincode || pharmacy.address?.pincode || (pharmacy.address as any)?.zip || '');
+        if (selectedArea && pharmacyArea && selectedArea === pharmacyArea) return true;
+        if (!selectedArea && selectedCity && pharmacyCity && selectedCity === pharmacyCity) return true;
+        return Boolean(selectedPincode && pharmacyPincode && selectedPincode === pharmacyPincode);
       });
       setNearbyPharmacies(filtered.slice(0, 4) as any);
       setLoading(false);
@@ -131,21 +187,7 @@ const CustomerDashboard: React.FC = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() => {
-                    const city = window.prompt('Enter city', location?.city || 'Ahmedabad') || '';
-                    const area = window.prompt('Enter area', location?.area || 'Satellite') || '';
-                    const pincode = window.prompt('Enter pincode', location?.pincode || '380015') || '';
-                    if (!city || !area || !pincode) return;
-                    setLocation({
-                      country: 'India',
-                      state: 'Gujarat',
-                      city,
-                      area,
-                      locality: area,
-                      pincode,
-                      landmark: '',
-                    });
-                  }}
+                  onClick={() => setIsLocationModalOpen(true)}
                   className="w-full py-2 text-sm font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors"
                 >
                   Change Location
@@ -165,6 +207,51 @@ const CustomerDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+      {isLocationModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-900">Change Location</h3>
+              <button
+                onClick={() => setIsLocationModalOpen(false)}
+                className="text-xs font-semibold text-slate-500 hover:text-slate-900"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-4 max-h-96 overflow-y-auto space-y-2">
+              {locationOptions.length > 0 ? locationOptions.map((option) => (
+                <button
+                  key={option.key}
+                  onClick={() => {
+                    setLocation({
+                      country: 'India',
+                      state: option.state || location?.state || 'Unknown',
+                      city: option.city || location?.city || '',
+                      area: option.area || option.city || '',
+                      locality: option.area || option.city || '',
+                      pincode: option.pincode || location?.pincode || '',
+                      landmark: '',
+                    });
+                    setIsLocationModalOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-3 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 transition-colors"
+                >
+                  <p className="text-sm font-semibold text-slate-900">{option.label} ({option.pharmacyCount} {option.pharmacyCount === 1 ? 'pharmacy' : 'pharmacies'})</p>
+                  <p className="text-xs text-slate-500">{[option.city, option.pincode].filter(Boolean).join(' • ') || 'Address details available from pharmacy profile'}</p>
+                </button>
+              )) : (
+                <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                  No pharmacy locations available yet.
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 text-xs text-slate-500">
+              Showing {locationOptions.length} unique location option(s) from {allCustomerPharmacies.length} live pharmacies.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

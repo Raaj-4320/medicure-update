@@ -134,14 +134,12 @@ const PharmacyDetail: React.FC = () => {
 
       {/* Header Card */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="h-64 relative">
-          <img src={pharmacy.image || undefined} alt={pharmacy.name || 'Profile Incomplete'} className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-          <div className="absolute bottom-6 left-8 text-white">
-            <h1 className="text-3xl font-bold mb-2">{pharmacy.name || 'Profile Incomplete'}</h1>
-            <div className="flex items-center gap-4 text-sm font-medium">
+        <div className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-100">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 mb-2">{pharmacy.name || 'Profile Incomplete'}</h1>
+            <div className="flex flex-wrap items-center gap-4 text-sm font-medium text-slate-600">
               <div className="flex items-center gap-1">
-                <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+                <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
                 {pharmacy.rating.toFixed(1)} ({pharmacy.reviewCount} reviews)
               </div>
               <div className="flex items-center gap-1">

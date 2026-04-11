@@ -51,6 +51,7 @@ import SafetyControl from './pages/admin/SafetyControl';
 import Financials from './pages/admin/Financials';
 import AdvancedLogistics from './pages/admin/AdvancedLogistics';
 import PrescriptionVerification from './pages/admin/PrescriptionVerification';
+import AdminOrders from './pages/admin/AdminOrders';
 
 // Delivery Pages
 import DeliveryLayout from './components/layout/DeliveryLayout';
@@ -204,6 +205,7 @@ const AppRoutes = () => {
         <Route index element={<AdminDashboard />} />
         <Route path="users" element={<UserManagement />} />
         <Route path="verifications" element={<SellerVerification />} />
+        <Route path="orders" element={<AdminOrders />} />
         <Route path="catalog" element={<MedicineMasterCatalog />} />
         <Route path="analytics" element={<SupplyChainAnalytics />} />
         <Route path="logistics" element={<LogisticsManagement />} />

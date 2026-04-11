@@ -8,7 +8,10 @@ import {
   XCircle, 
   ChevronRight,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  AlertCircle,
+  Eye,
+  ShieldAlert
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../AuthContext';
@@ -24,6 +27,7 @@ export default function SellerOrders() {
   const [errorMessage, setErrorMessage] = useState('');
   const [subscriptionError, setSubscriptionError] = useState('');
   const [hasPharmacy, setHasPharmacy] = useState(true);
+  const [prescriptionByOrderId, setPrescriptionByOrderId] = useState<Record<string, any>>({});
 
   const fetchOrders = async () => {
     try {
@@ -60,6 +64,24 @@ export default function SellerOrders() {
       setHasPharmacy(true);
       const data = await api.getOrders({ sellerId: profile?.uid || '', pharmacyId: myPharmacy.id });
       setOrders(data.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      const prescriptions = await api.getPrescriptions({ pharmacyId: myPharmacy.id });
+      const byOrderId = prescriptions.reduce<Record<string, any>>((acc, rx: any) => {
+        const status = String(rx.status || 'under_review').toLowerCase();
+        const normalizedStatus = status === 'pending' ? 'under_review' : status;
+        const orderId = String(rx.orderId || '');
+        if (orderId) acc[orderId] = { ...rx, status: normalizedStatus };
+        return acc;
+      }, {});
+      data.forEach((order: any) => {
+        if (order?.prescriptionId && !byOrderId[order.id]) {
+          const linked = prescriptions.find((rx: any) => rx.id === order.prescriptionId);
+          if (linked) {
+            const status = String(linked.status || 'under_review').toLowerCase();
+            byOrderId[order.id] = { ...linked, status: status === 'pending' ? 'under_review' : status };
+          }
+        }
+      });
+      setPrescriptionByOrderId(byOrderId);
       logFlow('SELLER_ORDERS_FETCH', {
         expected: ['orders for pharmacyId'],
         received: { pharmacyId: myPharmacy.id, count: data.length },
@@ -126,6 +148,19 @@ export default function SellerOrders() {
   }, [profile]);
 
   const updateStatus = async (orderId: string, newStatus: string) => {
+    const order = orders.find((entry) => entry.id === orderId);
+    const rx = prescriptionByOrderId[orderId];
+    const requiresPrescription = Boolean(order?.requiresPrescription || order?.prescriptionId || order?.prescriptionUrl);
+    const blockedStatus = requiresPrescription && (!rx || rx.status !== 'approved');
+    if (blockedStatus && (newStatus === 'approved' || newStatus === 'dispatched')) {
+      const reason = !rx
+        ? 'Prescription approval required before accepting this order.'
+        : rx.status === 'rejected'
+          ? 'Prescription was rejected. Order cannot proceed.'
+          : 'Prescription is still under review. Approve it from Prescription Management first.';
+      setErrorMessage(reason);
+      return;
+    }
     setUpdatingId(orderId);
     setErrorMessage('');
     try {
@@ -157,6 +192,60 @@ export default function SellerOrders() {
     if (status === 'failed') return 'text-red-700 bg-red-50';
     if (status === 'pending' || status === 'processing' || status === 'initiated') return 'text-amber-700 bg-amber-50';
     return 'text-slate-700 bg-slate-50';
+  };
+
+  const getPrescriptionMeta = (order: any) => {
+    const requiresPrescription = Boolean(order.requiresPrescription || order.prescriptionId || order.prescriptionUrl);
+    const rx = prescriptionByOrderId[order.id] || null;
+    const rxStatus = String(rx?.status || '').toLowerCase();
+    if (!requiresPrescription) {
+      return {
+        requiresPrescription: false,
+        state: 'not_required' as const,
+        label: 'Not Required',
+        chip: 'bg-slate-100 text-slate-600 border border-slate-200',
+        blocked: false,
+        reason: '',
+      };
+    }
+    if (!rx) {
+      return {
+        requiresPrescription: true,
+        state: 'missing' as const,
+        label: 'Missing',
+        chip: 'bg-red-50 text-red-700 border border-red-100',
+        blocked: true,
+        reason: 'Prescription missing. Cannot process this order.',
+      };
+    }
+    if (rxStatus === 'approved') {
+      return {
+        requiresPrescription: true,
+        state: 'approved' as const,
+        label: 'Approved',
+        chip: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
+        blocked: false,
+        reason: '',
+      };
+    }
+    if (rxStatus === 'rejected') {
+      return {
+        requiresPrescription: true,
+        state: 'rejected' as const,
+        label: 'Rejected',
+        chip: 'bg-red-50 text-red-700 border border-red-100',
+        blocked: true,
+        reason: 'Prescription rejected. Order cannot be dispatched.',
+      };
+    }
+    return {
+      requiresPrescription: true,
+      state: 'under_review' as const,
+      label: 'Pending Review',
+      chip: 'bg-amber-50 text-amber-700 border border-amber-100',
+      blocked: true,
+      reason: 'Prescription approval required before accepting this order.',
+    };
   };
 
   return (
@@ -206,6 +295,13 @@ export default function SellerOrders() {
           {orders.map((order) => (
             <div key={order.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden hover:shadow-md transition-shadow">
               <div className="p-6">
+                {(() => {
+                  const rxMeta = getPrescriptionMeta(order);
+                  const rx = prescriptionByOrderId[order.id];
+                  const blockAccept = order.status === 'pending' && rxMeta.blocked;
+                  const blockDispatch = order.status === 'approved' && rxMeta.blocked;
+                  return (
+                    <>
                 <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-600">
@@ -226,6 +322,32 @@ export default function SellerOrders() {
                   </div>
                   
                   <div className="flex items-center gap-3">
+                    {rxMeta.requiresPrescription && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase bg-slate-50 text-slate-600 border border-slate-200">
+                          Prescription Required
+                        </span>
+                        <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${rxMeta.chip}`}>
+                          {rxMeta.label}
+                        </span>
+                        {order.prescriptionUrl && (
+                          <button
+                            onClick={() => window.open(order.prescriptionUrl, '_blank', 'noopener,noreferrer')}
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase border border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1"
+                          >
+                            <Eye className="w-3 h-3" /> View
+                          </button>
+                        )}
+                        {(rx?.id || order.prescriptionId) && (
+                          <button
+                            onClick={() => window.open('/seller/prescriptions', '_self')}
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase border border-emerald-200 text-emerald-700 hover:bg-emerald-50 inline-flex items-center gap-1"
+                          >
+                            <ShieldAlert className="w-3 h-3" /> Review
+                          </button>
+                        )}
+                      </div>
+                    )}
                     {order.status === 'pending' && (
                       <>
                         <button 
@@ -237,8 +359,12 @@ export default function SellerOrders() {
                         </button>
                         <button 
                           onClick={() => updateStatus(order.id, 'approved')}
-                          disabled={updatingId === order.id}
-                          className="px-6 py-2 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+                          disabled={updatingId === order.id || blockAccept}
+                          className={`px-6 py-2 text-sm font-bold rounded-xl transition-all ${
+                            blockAccept
+                              ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                              : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-100'
+                          }`}
                         >
                           Approve Order
                         </button>
@@ -247,14 +373,25 @@ export default function SellerOrders() {
                     {order.status === 'approved' && (
                       <button 
                         onClick={() => updateStatus(order.id, 'dispatched')}
-                        disabled={updatingId === order.id}
-                        className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all"
+                        disabled={updatingId === order.id || blockDispatch}
+                        className={`px-6 py-2 text-sm font-bold rounded-xl transition-all ${
+                          blockDispatch
+                            ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
                       >
                         Dispatch Order
                       </button>
                     )}
                   </div>
                 </div>
+
+                {rxMeta.blocked && (order.status === 'pending' || order.status === 'approved') && (
+                  <div className="mb-4 flex items-center gap-2 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                    <AlertCircle className="w-4 h-4" />
+                    {rxMeta.reason}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-slate-100">
                   <div className="space-y-3">
@@ -294,16 +431,21 @@ export default function SellerOrders() {
 
                   <div className="space-y-3">
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Prescription</h4>
-                    {order.prescriptionUrl ? (
-                      <div className="flex items-center gap-2 text-emerald-600 text-sm font-bold">
+                    {rxMeta.requiresPrescription ? (
+                      <div className={`flex items-center gap-2 text-sm font-bold ${
+                        rxMeta.state === 'approved' ? 'text-emerald-600' : rxMeta.state === 'rejected' || rxMeta.state === 'missing' ? 'text-red-600' : 'text-amber-600'
+                      }`}>
                         <CheckCircle2 className="w-4 h-4" />
-                        Verified Prescription
+                        Prescription {rxMeta.label}
                       </div>
                     ) : (
                       <div className="text-slate-400 text-sm italic">Not Required</div>
                     )}
                   </div>
                 </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           ))}

@@ -14,9 +14,9 @@ import { api } from '../../services/api';
 import { motion, AnimatePresence } from 'motion/react';
 import { logUI } from '../../utils/uiLogger';
 import type { PaymentMethod, PaymentStatus } from '../../types';
-import { storage } from '../../firebase';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { parseStoredCart } from '../../utils/safeCart';
+import { getWishlistStorageKey, readWishlistIds } from '../../utils/wishlist';
+import PublicExploreHeader from '../../components/public/PublicExploreHeader';
 
 export default function CheckoutPage() {
   const { profile } = useAuth();
@@ -35,6 +35,7 @@ export default function CheckoutPage() {
   const [prescriptionMeta, setPrescriptionMeta] = useState<{ fileName: string; fileSize: number; mimeType: string; uploadedAt: string } | null>(null);
   const [prescriptionFile, setPrescriptionFile] = useState<File | null>(null);
   const [cartItems, setCartItems] = useState<any[]>([]);
+  const [wishlistCount, setWishlistCount] = useState(0);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [addressForm, setAddressForm] = useState({
     label: 'Home',
@@ -48,14 +49,68 @@ export default function CheckoutPage() {
     landmark: '',
   });
   const [addressSavedMessage, setAddressSavedMessage] = useState('');
+  const isLoggedInCustomer = Boolean(profile?.role === 'customer');
+  const wishlistKey = getWishlistStorageKey(profile?.uid);
+  const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+  const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+  const cloudinaryFolder = import.meta.env.VITE_CLOUDINARY_FOLDER || 'prescriptions';
+
+  const normalizeAddress = (address: any, index: number) => {
+    const base = address || {};
+    const fallbackAddressLine = base.addressLine || base.street || base.line1 || base.locality || base.area || '';
+    const fallbackLocality = base.locality || base.street || '';
+    const fallbackArea = base.area || base.localArea || fallbackLocality || '';
+    const fallbackCity = base.city || base.town || '';
+    const fallbackPincode = base.pincode || base.zip || '';
+    const generatedId = `${String(base.label || base.type || 'addr').toLowerCase()}-${String(fallbackCity).toLowerCase()}-${String(fallbackPincode)}-${index}`;
+    return {
+      ...base,
+      id: String(base.id || generatedId),
+      label: base.label || base.addressType || base.type || 'Address',
+      addressLine: fallbackAddressLine,
+      locality: fallbackLocality,
+      area: fallbackArea,
+      city: fallbackCity,
+      pincode: String(fallbackPincode),
+      state: base.state || 'Gujarat',
+      country: base.country || 'India',
+      landmark: base.landmark || '',
+      isDefault: Boolean(base.isDefault),
+    };
+  };
+
+  const uploadPrescriptionToCloudinary = async (file: File, userId: string): Promise<{ secureUrl: string; publicId: string }> => {
+    if (!cloudinaryCloudName || !cloudinaryUploadPreset) {
+      throw new Error('Prescription upload is not configured. Please contact support.');
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', cloudinaryUploadPreset);
+    formData.append('folder', `${cloudinaryFolder}/${userId}`);
+
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/auto/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error('Prescription upload failed. Please retry.');
+    }
+    const payload = await response.json();
+    if (!payload?.secure_url) {
+      throw new Error('Prescription upload returned an invalid URL.');
+    }
+    return { secureUrl: payload.secure_url as string, publicId: (payload.public_id as string) || '' };
+  };
 
   useEffect(() => {
     const guestStored = localStorage.getItem('guest_checkout_addresses');
     const guestAddresses = guestStored ? parseStoredCart(guestStored, 'Checkout guest addresses') : [];
-    const incoming = profile?.addresses || guestAddresses || [];
+    const incoming = (profile?.addresses || guestAddresses || []).map((address: any, index: number) => normalizeAddress(address, index));
     setAddresses(incoming);
-    if (!selectedAddress && incoming[0]?.id) {
-      setSelectedAddress(incoming[0].id);
+    const defaultAddress = incoming.find((address: any) => address.isDefault) || incoming[0];
+    const selectedStillValid = incoming.some((address: any) => String(address.id) === String(selectedAddress));
+    if ((!selectedAddress || !selectedStillValid) && defaultAddress?.id) {
+      setSelectedAddress(defaultAddress.id);
     }
   }, [profile]);
 
@@ -70,6 +125,10 @@ export default function CheckoutPage() {
       navigate('/cart');
     }
   }, [navigate]);
+
+  useEffect(() => {
+    setWishlistCount(readWishlistIds(wishlistKey, 'CheckoutPage header').length);
+  }, [wishlistKey, cartItems.length]);
 
   const subtotal = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   const deliveryFee = 40;
@@ -163,17 +222,20 @@ export default function CheckoutPage() {
         if (!prescriptionFile) {
           throw new Error('Prescription file missing. Please re-upload.');
         }
+        if (!customerId) {
+          throw new Error('Customer account is required for prescription upload.');
+        }
         console.info('[CHECKOUT] prescription upload started', { fileName: prescriptionFile.name, fileSize: prescriptionFile.size });
-        const prescriptionRef = ref(storage, `prescriptions/${profile?.uid || 'customer'}/${Date.now()}-${prescriptionFile.name}`);
-        await uploadBytes(prescriptionRef, prescriptionFile);
-        const prescriptionUrl = await getDownloadURL(prescriptionRef);
+        const uploaded = await uploadPrescriptionToCloudinary(prescriptionFile, customerId);
+        const prescriptionUrl = uploaded.secureUrl;
         const createdPrescription = await api.createPrescription({
           customerId,
           userId: customerId,
           pharmacyId: checkoutPharmacyId,
-          status: 'pending',
+          sellerId: sellerLinkId,
+          status: 'under_review',
           imageUrl: prescriptionUrl,
-          storagePath: prescriptionRef.fullPath,
+          storagePath: uploaded.publicId,
           fileName: prescriptionMeta.fileName,
           fileSize: prescriptionMeta.fileSize,
           mimeType: prescriptionMeta.mimeType,
@@ -183,9 +245,13 @@ export default function CheckoutPage() {
         uploadedPrescriptionUrl = prescriptionUrl;
         console.info('[CHECKOUT] prescription handled', { prescriptionId });
       }
-      const selectedAddressData = addresses.find((addr) => addr.id === selectedAddress);
+      const selectedAddressData = addresses.find((addr) => String(addr.id) === String(selectedAddress));
       if (!selectedAddressData) {
         throw new Error('Please select a valid delivery address.');
+      }
+      const normalizedSelectedAddress = normalizeAddress(selectedAddressData, 0);
+      if (!normalizedSelectedAddress.addressLine || !normalizedSelectedAddress.city) {
+        throw new Error('Selected address is incomplete. Please edit or add a valid address.');
       }
       console.info('[CHECKOUT] address resolved', { selectedAddress });
 
@@ -210,7 +276,7 @@ export default function CheckoutPage() {
         })),
         totalAmount: total,
         addressId: selectedAddress,
-        deliveryAddress: selectedAddressData,
+        deliveryAddress: normalizedSelectedAddress,
         orderType: 'delivery',
         status: 'pending',
         paymentMethod,
@@ -218,6 +284,7 @@ export default function CheckoutPage() {
         paymentId: paymentResponse.paymentId,
         paymentRecordId: paymentResponse.paymentId,
         transactionReference: paymentResponse.transactionId,
+        requiresPrescription,
         prescriptionId,
         prescriptionUrl: uploadedPrescriptionUrl
       };
@@ -226,6 +293,16 @@ export default function CheckoutPage() {
       console.info('[CHECKOUT] order create started');
       const order = await api.createOrder(orderData);
       console.info('[CHECKOUT] order create success', { orderId: order.id });
+      if (prescriptionId) {
+        void api.updatePrescription(prescriptionId, {
+          orderId: order.id,
+          pharmacyId: checkoutPharmacyId,
+          sellerId: sellerLinkId,
+          status: 'under_review',
+        }).catch((rxLinkError) => {
+          console.error('[CHECKOUT] prescription link update failed', rxLinkError);
+        });
+      }
       if (paymentResponse.paymentId) {
         void api.updatePayment(paymentResponse.paymentId, {
           orderId: order.id,
@@ -262,6 +339,13 @@ export default function CheckoutPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
+      <PublicExploreHeader
+        wishlistCount={wishlistCount}
+        cartCount={cartItems.reduce((acc, item) => acc + (Number(item.quantity) || 0), 0)}
+        isLoggedInCustomer={isLoggedInCustomer}
+        accountReturnTo="/checkout"
+        searchMode="redirect"
+      />
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="flex items-center gap-4 mb-8">
           <button onClick={() => navigate(-1)} className="p-2 hover:bg-white rounded-full transition-colors">
@@ -302,7 +386,9 @@ export default function CheckoutPage() {
                             <MapPin className="w-4 h-4 text-slate-400" />
                             <span className="font-bold text-slate-900">{addr.label || addr.type || 'Address'}</span>
                           </div>
-                          <p className="text-sm text-slate-600">{addr.locality || addr.addressLine || addr.area}, {addr.area}, {addr.city}</p>
+                          <p className="text-sm text-slate-600">
+                            {[addr.addressLine || addr.locality || addr.area, addr.area, addr.city, addr.pincode].filter(Boolean).join(', ')}
+                          </p>
                         </div>
                       </label>
                     ))}
@@ -340,7 +426,7 @@ export default function CheckoutPage() {
                         landmark: addressForm.landmark,
                         isDefault: addresses.length === 0,
                       };
-                      const updatedAddresses = [...addresses, newAddress];
+                      const updatedAddresses = [...addresses, normalizeAddress(newAddress, addresses.length)];
                       if (profile?.uid) {
                         await api.updateUser(profile.uid, { addresses: updatedAddresses });
                       } else {

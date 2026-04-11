@@ -5,6 +5,7 @@ import { useAuth } from '../../AuthContext';
 import { api } from '../../services/api';
 import { Pharmacy, SellerMedicine } from '../../types';
 import { parseStoredCart } from '../../utils/safeCart';
+import { getWishlistStorageKey, readWishlistIds, writeWishlistIds } from '../../utils/wishlist';
 import { resolveDisplayName } from '../../utils/displayName';
 
 const PublicProductDetailPage: React.FC = () => {
@@ -16,15 +17,15 @@ const PublicProductDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [recentlyViewed, setRecentlyViewed] = useState<SellerMedicine[]>([]);
+  const [cartQuantity, setCartQuantity] = useState(0);
 
   const isLoggedInCustomer = Boolean(user && profile?.role === 'customer');
-  const wishlistKey = `explore_wishlist_${profile?.uid || 'guest'}`;
+  const wishlistKey = getWishlistStorageKey(profile?.uid);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
 
   useEffect(() => {
     try {
-      const parsed = parseStoredCart(localStorage.getItem(wishlistKey), 'PublicProductDetailPage wishlist');
-      setWishlistIds(parsed.filter((id): id is string => typeof id === 'string'));
+      setWishlistIds(readWishlistIds(wishlistKey, 'PublicProductDetailPage wishlist'));
     } catch {
       setWishlistIds([]);
     }
@@ -61,6 +62,22 @@ const PublicProductDetailPage: React.FC = () => {
     load();
   }, [productId]);
 
+  useEffect(() => {
+    if (!item?.id) {
+      setCartQuantity(0);
+      return;
+    }
+    const cart = parseStoredCart(localStorage.getItem('cart'), 'PublicProductDetailPage cart quantity');
+    const quantity = cart.reduce((sum, entry) => {
+      const matches =
+        entry?.id === item.id ||
+        entry?.medicineId === item.id ||
+        entry?.sellerMedicineId === item.id;
+      return matches ? sum + (Number(entry?.quantity) || 0) : sum;
+    }, 0);
+    setCartQuantity(quantity);
+  }, [item?.id]);
+
   const addToCart = () => {
     if (!item) return;
     const cart = parseStoredCart(localStorage.getItem('cart'), 'PublicProductDetailPage addToCart');
@@ -83,6 +100,7 @@ const PublicProductDetailPage: React.FC = () => {
         image: item.image,
       }];
       localStorage.setItem('cart', JSON.stringify(replacement));
+      setCartQuantity(1);
       return;
     }
 
@@ -102,13 +120,20 @@ const PublicProductDetailPage: React.FC = () => {
       image: item.image,
     });
     localStorage.setItem('cart', JSON.stringify(next));
+    const updatedQuantity = next.reduce((sum, entry) => {
+      const matches =
+        entry?.id === item.id ||
+        entry?.medicineId === item.id ||
+        entry?.sellerMedicineId === item.id;
+      return matches ? sum + (Number(entry?.quantity) || 0) : sum;
+    }, 0);
+    setCartQuantity(updatedQuantity);
   };
 
   const toggleWishlist = () => {
     if (!item) return;
     const next = wishlistIds.includes(item.id) ? wishlistIds.filter((id) => id !== item.id) : [...wishlistIds, item.id];
-    setWishlistIds(next);
-    localStorage.setItem(wishlistKey, JSON.stringify(next));
+    setWishlistIds(writeWishlistIds(wishlistKey, next));
   };
 
   if (loading) return <div className="min-h-screen bg-slate-50 p-6 text-slate-500">Loading product details…</div>;
@@ -143,7 +168,9 @@ const PublicProductDetailPage: React.FC = () => {
             <p className="mt-4 text-3xl font-bold text-emerald-700">₹{item.discountPrice || item.price}</p>
 
             <div className="mt-6 flex flex-col sm:flex-row gap-3">
-              <button onClick={addToCart} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 inline-flex items-center justify-center gap-2"><ShoppingBag className="w-4 h-4" /> Add to Cart</button>
+              <button onClick={addToCart} className="px-5 py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 inline-flex items-center justify-center gap-2">
+                <ShoppingBag className="w-4 h-4" /> {cartQuantity > 0 ? `In Cart • Qty ${cartQuantity}` : 'Add to Cart'}
+              </button>
               <button onClick={toggleWishlist} className={`px-5 py-3 rounded-xl border font-semibold inline-flex items-center justify-center gap-2 ${wishlistIds.includes(item.id) ? 'border-rose-300 text-rose-600' : 'border-slate-300 text-slate-700'}`}><Heart className="w-4 h-4" /> {wishlistIds.includes(item.id) ? 'Wishlisted' : 'Wishlist'}</button>
               <button
                 onClick={() => {
@@ -160,6 +187,14 @@ const PublicProductDetailPage: React.FC = () => {
                 Buy Now
               </button>
             </div>
+            {cartQuantity > 0 && (
+              <div className="mt-2 text-sm text-emerald-700">
+                Already added in cart ({cartQuantity}) •{' '}
+                <button onClick={() => navigate('/cart')} className="font-semibold underline underline-offset-2">
+                  Go to Cart
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
