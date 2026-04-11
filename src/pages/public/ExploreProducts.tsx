@@ -5,6 +5,7 @@ import { useAuth } from '../../AuthContext';
 import { api } from '../../services/api';
 import { Pharmacy, SellerMedicine } from '../../types';
 import { parseStoredCart } from '../../utils/safeCart';
+import { getWishlistStorageKey, readWishlistIds, writeWishlistIds } from '../../utils/wishlist';
 import { resolveDisplayName } from '../../utils/displayName';
 
 const ExploreProducts: React.FC = () => {
@@ -23,7 +24,7 @@ const ExploreProducts: React.FC = () => {
   const [inStockOnly, setInStockOnly] = useState(false);
 
   const isLoggedInCustomer = Boolean(user && profile?.role === 'customer');
-  const wishlistKey = useMemo(() => `explore_wishlist_${profile?.uid || 'guest'}`, [profile?.uid]);
+  const wishlistKey = useMemo(() => getWishlistStorageKey(profile?.uid), [profile?.uid]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -56,8 +57,7 @@ const ExploreProducts: React.FC = () => {
 
   useEffect(() => {
     try {
-      const parsed = parseStoredCart(localStorage.getItem(wishlistKey), 'ExploreProducts wishlist');
-      setWishlist(parsed.filter((id): id is string => typeof id === 'string'));
+      setWishlist(readWishlistIds(wishlistKey, 'ExploreProducts wishlist'));
     } catch (error) {
       console.warn('Failed to parse explore wishlist', error);
       setWishlist([]);
@@ -157,8 +157,7 @@ const ExploreProducts: React.FC = () => {
   const toggleWishlist = (medicineId: string) => {
     setWishlist((prev) => {
       const next = prev.includes(medicineId) ? prev.filter((id) => id !== medicineId) : [...prev, medicineId];
-      localStorage.setItem(wishlistKey, JSON.stringify(next));
-      return next;
+      return writeWishlistIds(wishlistKey, next);
     });
   };
 
